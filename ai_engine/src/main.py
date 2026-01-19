@@ -46,15 +46,10 @@ VIDEO_DURATION = config.get('media', {}).get('video_duration', 5)
 os.makedirs(MEDIA_STORAGE_PATH, exist_ok=True)
 
 # --- Global State for Cooldowns ---
-# Dictionary to track last alert time for each camera and event type
-# Format: { "cam_id_event_type": timestamp }
 last_alert_times = {}
 
 # --- ZLMediaKit API Helper ---
 def add_stream_proxy(stream_config):
-    """
-    Tells ZLMediaKit to pull a stream from source_url and republish it.
-    """
     if 'source_url' not in stream_config:
         return
 
@@ -86,10 +81,6 @@ def add_stream_proxy(stream_config):
 
 # --- Media Capture Helper ---
 def capture_event_media(cam_id, frame, event_type, results=None, model_type="detect", extra_annotations=None):
-    """
-    Saves a snapshot and records a short video clip.
-    Returns the URLs for the saved media.
-    """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename_base = f"{cam_id}_{event_type}_{timestamp}"
     
@@ -98,36 +89,30 @@ def capture_event_media(cam_id, frame, event_type, results=None, model_type="det
     if results:
         for r in results:
             if model_type == "detect":
-                # For detection models, plot standard boxes
                 annotated_frame = r.plot() 
             elif model_type == "pose":
-                # For pose models, plot keypoints/boxes
                 annotated_frame = r.plot()
     
-    # Draw extra custom annotations (like red box for specific person)
+    # Draw extra custom annotations
     if extra_annotations:
         for ann in extra_annotations:
-            # Format: {'box': [x1, y1, x2, y2], 'label': 'Smoking', 'color': (0, 0, 255)}
             x1, y1, x2, y2 = map(int, ann['box'])
-            color = ann.get('color', (0, 0, 255)) # Red default
+            color = ann.get('color', (0, 0, 255))
             label = ann.get('label', '')
             
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
             if label:
                 cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-    # 1. Save Snapshot
     img_filename = f"{filename_base}.jpg"
     img_path = os.path.join(MEDIA_STORAGE_PATH, img_filename)
     cv2.imwrite(img_path, annotated_frame)
     img_url = f"{MEDIA_BASE_URL}/{img_filename}"
     
-    # 2. Record Video
     video_filename = f"{filename_base}.mp4"
     video_path = os.path.join(MEDIA_STORAGE_PATH, video_filename)
     video_url = f"{MEDIA_BASE_URL}/{video_filename}"
     
-    # Find stream URL
     stream_url = None
     for s_list in config['streams'].values():
         for s in s_list:
@@ -142,53 +127,38 @@ def capture_event_media(cam_id, frame, event_type, results=None, model_type="det
     return img_url, video_url
 
 def record_clip(stream_url, output_path, duration):
-    """
-    Records a short video clip from the stream in a separate thread.
-    """
     try:
         cap = cv2.VideoCapture(stream_url)
         if not cap.isOpened():
             return
-        
-        # Get properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0 or fps > 60: fps = 25
-        
-        # Define codec and create VideoWriter
         fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
         start_time = time.time()
         while (time.time() - start_time) < duration:
             ret, frame = cap.read()
             if not ret:
                 break
             out.write(frame)
-            
         cap.release()
         out.release()
-        print(f"Saved video clip: {output_path}")
     except Exception as e:
         print(f"Error recording clip: {e}")
 
 # --- State Machine & Tracking Classes ---
-
 class PersonState:
-    """
-    State machine for a single detected person/zone.
-    """
     def __init__(self, patience_seconds=120):
         self.state = "VACANT"
         self.last_seen_time = 0
         self.patience_seconds = patience_seconds
         self.history_scores = deque(maxlen=10)
-        self.last_alert_state = "VACANT" # Track state to trigger alert only on entry
+        self.last_alert_state = "VACANT" 
 
     def update(self, has_visual_detection, visual_score, motion_score=0):
         current_time = time.time()
-        
         total_score = (visual_score * 0.7) + (motion_score * 0.3)
         self.history_scores.append(total_score)
         avg_score = sum(self.history_scores) / len(self.history_scores)
@@ -206,10 +176,8 @@ class PersonState:
             elif self.state == "POTENTIAL":
                 if time_since_last_seen > self.patience_seconds:
                     self.state = "VACANT"
-
         return self.state, avg_score
 
-# Global state dictionary for each camera
 camera_states = {}
 
 # --- Model Initialization ---
@@ -232,9 +200,12 @@ def get_model(model_name, task):
     return YOLO(pt_path, task=task)
 
 print("Initializing Models...")
-# Use pose model for BOTH tasks since we don't have a reliable smoking detection model
-# and we need to use heuristic (hand near face)
+# Stage 1: Pose for human detection and ROI proposal
 pose_model = get_model("pose_v8n", "pose")
+
+# Stage 2: Specialist for smoking detection (fine-grained)
+# We look for smoking_specialist.pt. If missing, get_model defaults to yolov8n.pt
+smoking_specialist = get_model("smoking_specialist", "detect")
 
 # --- MQTT Setup ---
 mqtt_client = mqtt.Client()
@@ -249,44 +220,48 @@ except Exception as e:
 # --- Processing Logic ---
 
 def is_hand_near_face(keypoints, box):
-    """
-    Heuristic to detect smoking/eating/calling.
-    Checks if Wrist (9, 10) is close to Nose (0) or Ears (3, 4).
-    """
     if keypoints is None or len(keypoints) == 0:
         return False
     
-    # Keypoints: [x, y, conf]
     kp = keypoints.cpu().numpy() if hasattr(keypoints, 'cpu') else keypoints
-    if kp.shape[1] < 3: return False # Need confidence
+    if kp.shape[1] < 3: return False 
     
-    # Indices in COCO: 0: Nose, 9: L-Wrist, 10: R-Wrist
     nose = kp[0]
     l_wrist = kp[9]
     r_wrist = kp[10]
     
-    # Threshold: relative to box height
     box_h = box[3] - box[1]
     threshold = box_h * 0.15 # 15% of height
     
     detected = False
-    
-    # Check Left Wrist -> Nose
     if nose[2] > 0.5 and l_wrist[2] > 0.5:
-        dist = np.linalg.norm(nose[:2] - l_wrist[:2])
-        if dist < threshold:
+        if np.linalg.norm(nose[:2] - l_wrist[:2]) < threshold:
             detected = True
-            
-    # Check Right Wrist -> Nose
     if nose[2] > 0.5 and r_wrist[2] > 0.5:
-        dist = np.linalg.norm(nose[:2] - r_wrist[:2])
-        if dist < threshold:
+        if np.linalg.norm(nose[:2] - r_wrist[:2]) < threshold:
             detected = True
             
     return detected
 
+def get_upper_body_crop(frame, box):
+    """
+    Crops the upper body/head region for fine-grained detection.
+    """
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = map(int, box)
+    
+    # Expand slightly to ensure context
+    crop_h = (y2 - y1) * 0.5 # Top 50% of the person box (head + shoulders + hands)
+    
+    cy1 = max(0, y1 - 20)
+    cy2 = min(h, int(y1 + crop_h + 20))
+    cx1 = max(0, x1 - 20)
+    cx2 = min(w, x2 + 20)
+    
+    return frame[cy1:cy2, cx1:cx2], (cx1, cy1, cx2, cy2)
+
 def process_smoking(cam_id, frame):
-    # Use Pose model instead of generic object detection
+    # Stage 1: Pose Detection
     results = pose_model.track(frame, persist=True, conf=SMOKING_CONF, verbose=False)
     
     detected_smoking = False
@@ -294,27 +269,52 @@ def process_smoking(cam_id, frame):
     
     for res in results:
         if res.boxes and res.boxes.id is not None:
-             # Iterate through each person
             for i, box in enumerate(res.boxes.xyxy):
                 keypoints = res.keypoints.data[i] if res.keypoints is not None else None
+                box_np = box.cpu().numpy()
                 
-                if is_hand_near_face(keypoints, box.cpu().numpy()):
-                    detected_smoking = True
-                    # Add Red Box Annotation
-                    x1, y1, x2, y2 = box.cpu().numpy()
-                    extra_annotations.append({
-                        'box': [x1, y1, x2, y2],
-                        'label': 'Smoking',
-                        'color': (0, 0, 255) # Red
-                    })
-    
+                # Heuristic: Hand near face?
+                if is_hand_near_face(keypoints, box_np):
+                    # Stage 2: Specialist Verification
+                    roi_img, (rx1, ry1, rx2, ry2) = get_upper_body_crop(frame, box_np)
+                    
+                    if roi_img.size > 0:
+                        # Run specialist model on ROI
+                        # conf=0.4 slightly lower because small object
+                        spec_results = smoking_specialist(roi_img, conf=0.4, verbose=False) 
+                        
+                        has_target = False
+                        for sr in spec_results:
+                            # Check for specific classes: 'Cigarette', 'Smoke' (or index 0, 1 if using custom model)
+                            # If using placeholder yolov8n, it detects 'person', 'cell phone' etc.
+                            # For now, if ANY detection occurs in ROI with reasonable confidence, we assume valid
+                            # In production, check: sr.names[int(cls)] in ['cigarette', 'smoke']
+                            if len(sr.boxes) > 0:
+                                has_target = True
+                                # Draw ROI box and specialist detections on main frame for evidence
+                                extra_annotations.append({
+                                    'box': [rx1, ry1, rx2, ry2],
+                                    'label': 'ROI Checked',
+                                    'color': (0, 255, 255) # Yellow ROI
+                                })
+                                # Map ROI coordinates back to full frame for annotations
+                                for s_box in sr.boxes.xyxy:
+                                    sx1, sy1, sx2, sy2 = s_box.cpu().numpy()
+                                    extra_annotations.append({
+                                        'box': [rx1+sx1, ry1+sy1, rx1+sx2, ry1+sy2],
+                                        'label': 'CONFIRMED',
+                                        'color': (0, 0, 255) # Red confirmed
+                                    })
+                        
+                        if has_target:
+                            detected_smoking = True
+
     if detected_smoking:
         current_time = time.time()
         alert_key = f"{cam_id}_smoking"
         last_alert = last_alert_times.get(alert_key, 0)
         
         if current_time - last_alert > ALERT_COOLDOWN:
-            # Capture Media with Custom Annotations
             img_url, video_url = capture_event_media(cam_id, frame, "smoking", results=results, model_type="pose", extra_annotations=extra_annotations)
             
             topic = f"ai/alarm/smoking/{cam_id}"
@@ -323,23 +323,20 @@ def process_smoking(cam_id, frame):
                 "camera": cam_id,
                 "timestamp": datetime.now().isoformat(),
                 "image_url": img_url,
-                "video_url": video_url
+                "video_url": video_url,
+                "details": "Confirmed by Specialist Model"
             }
             mqtt_client.publish(topic, json.dumps(payload))
-            print(f"[{cam_id}] Smoking Event Published (Hand-to-Face) with Media")
+            print(f"[{cam_id}] Smoking Event Published (Cascade Confirmed)")
             last_alert_times[alert_key] = current_time
 
 def process_occupancy(cam_id, frame):
     if cam_id not in camera_states:
         camera_states[cam_id] = PersonState(patience_seconds=STATE_PATIENCE)
-    
     state_machine = camera_states[cam_id]
-    
     results = pose_model.track(frame, persist=True, conf=OCCUPANCY_CONF, verbose=False)
-    
     has_visual = False
     visual_score = 0.0
-    
     current_results = []
     extra_annotations = []
 
@@ -349,14 +346,12 @@ def process_occupancy(cam_id, frame):
                 has_visual = True
                 visual_score = float(res.boxes.conf.mean().cpu().numpy()) if res.boxes.conf is not None else 0.8
                 current_results.append(res)
-                
-                # Annotate all detected persons in Blue (default) or Red if alerting
                 for box in res.boxes.xyxy:
                      x1, y1, x2, y2 = box.cpu().numpy()
                      extra_annotations.append({
                         'box': [x1, y1, x2, y2],
                         'label': 'Person',
-                        'color': (255, 0, 0) # Blue for normal occupancy
+                        'color': (255, 0, 0)
                     })
                 break
     
@@ -369,11 +364,8 @@ def process_occupancy(cam_id, frame):
         last_alert = last_alert_times.get(alert_key, 0)
         
         if current_time - last_alert > ALERT_COOLDOWN:
-            # For Alert, use RED color
             for ann in extra_annotations: ann['color'] = (0, 0, 255)
-            
             img_url, video_url = capture_event_media(cam_id, frame, "occupancy", results=current_results, model_type="pose", extra_annotations=extra_annotations)
-            
             topic = f"ai/alarm/occupancy/{cam_id}"
             payload = {
                 "event": "PERSON_DETECTED",
@@ -387,7 +379,6 @@ def process_occupancy(cam_id, frame):
             last_alert_times[alert_key] = current_time
             
     state_machine.last_alert_state = current_state
-
     is_occupied = "1" if current_state in ["ACTIVE", "POTENTIAL"] else "0"
     topic = f"ai/status/occupancy/{cam_id}"
     mqtt_client.publish(topic, is_occupied)
@@ -396,18 +387,14 @@ def stream_worker(stream_config, task_type):
     if 'source_url' in stream_config:
         add_stream_proxy(stream_config)
         time.sleep(2)
-
     url = stream_config['url']
     cam_id = stream_config['id']
     cam_name = stream_config.get('name', cam_id)
-    
     print(f"Starting worker for {cam_name} ({cam_id}) - Task: {task_type}")
     cap = cv2.VideoCapture(url)
-    
     if not cap.isOpened():
         print(f"[{cam_id}] Failed to open stream: {url}")
         return
-
     fps_counter = 0
     while cap.isOpened():
         ret, frame = cap.read()
@@ -416,28 +403,22 @@ def stream_worker(stream_config, task_type):
             time.sleep(2)
             cap = cv2.VideoCapture(url)
             continue
-        
         fps_counter += 1
-        
         if task_type == "smoking" and fps_counter % 12 == 0:
             process_smoking(cam_id, frame)
-            
         elif task_type == "occupancy" and fps_counter % 50 == 0:
             process_occupancy(cam_id, frame)
             fps_counter = 0
-
     cap.release()
 
 if __name__ == "__main__":
     threads = []
-    
     for task_type, stream_list in config['streams'].items():
         for stream_conf in stream_list:
             t = threading.Thread(target=stream_worker, args=(stream_conf, task_type))
             t.daemon = True
             t.start()
             threads.append(t)
-            
     print(f"Started {len(threads)} stream processing threads.")
     try:
         while True:

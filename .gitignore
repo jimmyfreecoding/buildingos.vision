@@ -6,9 +6,11 @@ node_red_data/flows_cred.json
 # Generated Media
 zlm/www/captures/
 
-# AI Models
-ai_engine/models/*.pt
+# AI Models & Datasets
+
 ai_engine/models/*.engine
+ai_engine/models/dataset/
+ai_engine/models/train/
 
 # Python
 __pycache__/
