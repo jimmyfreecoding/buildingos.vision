@@ -1,32 +1,35 @@
 {
     "mqtt": {
-        "broker": "emqx",
+        "broker": "buildingos-emqx-prod",
         "port": 1883,
         "keepalive": 60
+    },
+    "zlm": {
+        "api_url": "http://zlm:80/index/api",
+        "secret": "6GSUvTxPUCFa4PCdpYj56KJWjx4Wa7KY"
+    },
+    "media": {
+        "storage_path": "/app/www/captures",
+        "base_url": "http://localhost:10081/captures",
+        "video_duration": 5
     },
     "streams": {
         "smoking": [
             {
-                "url": "rtsp://zlm:554/live/stair_01",
                 "id": "stair_01",
-                "name": "Staircase Level 1"
-            },
-            {
-                "url": "rtsp://zlm:554/live/stair_02",
-                "id": "stair_02",
-                "name": "Staircase Level 2"
+                "name": "Staircase Level 1",
+                "source_url": "rtsp://admin:Dvdv1205@10.0.0.229:554/cam/realmonitor?channel=1&subtype=1",
+                "zlm_stream_id": "stair_01",
+                "url": "rtsp://zlm:554/live/stair_01"
             }
         ],
         "occupancy": [
             {
-                "url": "rtsp://zlm:554/live/office_1a",
                 "id": "office_1a",
-                "name": "Office Area 1A"
-            },
-            {
-                "url": "rtsp://zlm:554/live/office_1b",
-                "id": "office_1b",
-                "name": "Office Area 1B"
+                "name": "Office Area 1A",
+                "source_url": "rtsp://admin:Dvdv1205@10.0.0.119:554/cam/realmonitor?channel=1&subtype=1",
+                "zlm_stream_id": "office_1a",
+                "url": "rtsp://zlm:554/live/office_1a"
             }
         ]
     },

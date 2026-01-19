@@ -1,0 +1,19 @@
+# Node-RED
+node_red_data/.npm/
+node_red_data/node_modules/
+node_red_data/flows_cred.json
+
+# Generated Media
+zlm/www/captures/
+
+# AI Models
+ai_engine/models/*.pt
+ai_engine/models/*.engine
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
