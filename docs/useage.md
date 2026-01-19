@@ -9,7 +9,7 @@ The NVIDIA Jetson Orin™ Nano Super Developer Kit delivers up to 67 TOPS of AI 
 
 ### 1. 算力开销估算 (Inference Budget)
 
-我们假设你使用的是优化过的 **YOLOv8/v11n** 模型（TensorRT INT8 量化）：
+使用的是优化过的 **YOLOv8/v11n** 模型（TensorRT INT8 量化）：
 
 * **人数识别（Occupancy/Pose）**：如果你采用抽帧策略（如 1fps 或 2fps），每路开销极低（约 1-2ms）。8路全开的总开销约为 10-16ms/秒。
 * **抽烟识别（Two-Stage: Pose + ROI Crop）**：这是重头戏。
