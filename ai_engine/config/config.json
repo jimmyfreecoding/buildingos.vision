@@ -1,0 +1,38 @@
+{
+    "mqtt": {
+        "broker": "emqx",
+        "port": 1883,
+        "keepalive": 60
+    },
+    "streams": {
+        "smoking": [
+            {
+                "url": "rtsp://zlm:554/live/stair_01",
+                "id": "stair_01",
+                "name": "Staircase Level 1"
+            },
+            {
+                "url": "rtsp://zlm:554/live/stair_02",
+                "id": "stair_02",
+                "name": "Staircase Level 2"
+            }
+        ],
+        "occupancy": [
+            {
+                "url": "rtsp://zlm:554/live/office_1a",
+                "id": "office_1a",
+                "name": "Office Area 1A"
+            },
+            {
+                "url": "rtsp://zlm:554/live/office_1b",
+                "id": "office_1b",
+                "name": "Office Area 1B"
+            }
+        ]
+    },
+    "model_params": {
+        "smoking_conf": 0.5,
+        "occupancy_conf": 0.4,
+        "state_patience": 120
+    }
+}

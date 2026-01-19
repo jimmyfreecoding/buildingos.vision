@@ -1,0 +1,42 @@
+name: buildingos.vision
+services:
+  # 流媒体中转
+  zlm:
+    image: zlmediakit/zlmediakit:master
+    ports:
+      - "10080:80"
+      - "10554:554"
+      - "11935:1935"
+      - "18080:8080"
+    volumes:
+      - ./zlm/config.ini:/opt/media/conf/config.ini
+      # Mount record directory for file simulation if needed
+      - ./zlm/www:/opt/media/www/
+    restart: always
+
+  # AI 推理引擎 (关键)
+  ai-engine:
+    build: 
+      context: ./ai_engine
+      dockerfile: Dockerfile
+    runtime: nvidia
+    environment:
+      - MQTT_BROKER=emqx
+      - ZLM_API=http://zlm:80/index/api/
+    extra_hosts:
+      - "emqx:host-gateway"
+    volumes:
+      - ./ai_engine/models:/app/models
+      - ./ai_engine/config:/app/config
+    depends_on:
+      - zlm
+    restart: always
+
+  # 业务逻辑编排
+  node-red:
+    image: nodered/node-red:latest
+    ports:
+      - "11880:1880"
+    volumes:
+      - ./node_red_data:/data
+    restart: always
