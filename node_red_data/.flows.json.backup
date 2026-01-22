@@ -15,31 +15,24 @@
         "clientid": "",
         "autoConnect": true,
         "usetls": false,
-        "protocolVersion": "5",
+        "protocolVersion": "4",
         "keepalive": "60",
         "cleansession": true,
-        "autoUnsubscribe": true,
         "birthTopic": "",
         "birthQos": "0",
-        "birthRetain": "false",
         "birthPayload": "",
-        "birthMsg": {},
         "closeTopic": "",
         "closeQos": "0",
         "closePayload": "",
-        "closeMsg": {},
         "willTopic": "",
         "willQos": "0",
-        "willPayload": "",
-        "willMsg": {},
-        "userProps": "",
-        "sessionExpiry": ""
+        "willPayload": ""
     },
     {
         "id": "0e45c8c7cafe4e98",
         "type": "mqtt-broker",
         "name": "mqtt服务器",
-        "broker": "emqx",
+        "broker": "buildingos-emqx-prod",
         "port": "1883",
         "clientid": "",
         "autoConnect": true,
@@ -74,13 +67,13 @@
         "topic": "ai/alarm/smoking/+",
         "qos": "0",
         "datatype": "auto",
-        "broker": "3cc11d24.ff01a2",
+        "broker": "0e45c8c7cafe4e98",
         "nl": false,
         "rap": true,
         "rh": 0,
         "inputs": 0,
         "x": 160,
-        "y": 60,
+        "y": 100,
         "wires": [
             [
                 "e5c3b2a1.2b3c4d",
@@ -101,7 +94,7 @@
         "targetType": "msg",
         "statusVal": "",
         "statusType": "auto",
-        "x": 400,
+        "x": 600,
         "y": 100,
         "wires": []
     },
@@ -109,8 +102,8 @@
         "id": "a1b2c3d4.e5f6a7",
         "type": "function",
         "z": "f6f2187d.f17ca8",
-        "name": "Format Alert",
-        "func": "var topicParts = msg.topic.split('/');\nvar camId = topicParts[topicParts.length - 1];\nmsg.payload = {\n    event: \"SMOKING_DETECTED\",\n    camera: camId,\n    timestamp: new Date().toISOString(),\n    details: msg.payload\n};\nreturn msg;",
+        "name": "Parse & Format Alert",
+        "func": "var payload = msg.payload;\n\n// Try to parse JSON if it's a string\nif (typeof payload === 'string') {\n    try {\n        payload = JSON.parse(payload);\n    } catch(e) {\n        // Not valid JSON, wrap it\n        var topicParts = msg.topic.split('/');\n        var camId = topicParts[topicParts.length - 1];\n        payload = {\n            event: \"UNKNOWN_EVENT\",\n            camera: camId,\n            raw: msg.payload,\n            timestamp: new Date().toISOString()\n        };\n    }\n}\n\nmsg.payload = payload;\nreturn msg;",
         "outputs": 1,
         "noerr": 0,
         "initialize": "",
@@ -149,13 +142,13 @@
         "topic": "ai/status/occupancy/+",
         "qos": "0",
         "datatype": "auto",
-        "broker": "3cc11d24.ff01a2",
+        "broker": "0e45c8c7cafe4e98",
         "nl": false,
         "rap": true,
         "rh": 0,
         "inputs": 0,
         "x": 160,
-        "y": 240,
+        "y": 300,
         "wires": [
             [
                 "d4e5f6a7.b8c9d0"
@@ -167,7 +160,7 @@
         "type": "debug",
         "z": "f6f2187d.f17ca8",
         "name": "Occupancy Debug",
-        "active": true,
+        "active": false,
         "tosidebar": true,
         "console": false,
         "tostatus": false,
@@ -176,7 +169,29 @@
         "statusVal": "",
         "statusType": "auto",
         "x": 420,
-        "y": 240,
+        "y": 300,
         "wires": []
+    },
+    {
+        "id": "e6f7a8b9.c0d1e2",
+        "type": "mqtt in",
+        "z": "f6f2187d.f17ca8",
+        "name": "Occupancy Alerts",
+        "topic": "ai/alarm/occupancy/+",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "0e45c8c7cafe4e98",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 200,
+        "wires": [
+            [
+                "e5c3b2a1.2b3c4d",
+                "a1b2c3d4.e5f6a7"
+            ]
+        ]
     }
 ]

@@ -34,6 +34,8 @@ SMOKING_CONF = config['model_params'].get('smoking_conf', 0.5)
 OCCUPANCY_CONF = config['model_params'].get('occupancy_conf', 0.4)
 STATE_PATIENCE = config['model_params'].get('state_patience', 120)
 ALERT_COOLDOWN = config['model_params'].get('alert_cooldown', 30) # Default 30s cooldown
+SMOKING_SPECIALIST_CONF = config['model_params'].get('smoking_specialist_conf', 0.25)
+POSE_HEURISTIC_THRESHOLD = config['model_params'].get('pose_heuristic_threshold', 0.25)
 
 ZLM_API_URL = config.get('zlm', {}).get('api_url', "http://zlm:80/index/api")
 ZLM_SECRET = config.get('zlm', {}).get('secret', "")
@@ -201,11 +203,25 @@ def get_model(model_name, task):
 
 print("Initializing Models...")
 # Stage 1: Pose for human detection and ROI proposal
+# Load models in main thread to initialize them safely before threading
 pose_model = get_model("pose_v8n", "pose")
+# Force initialization of the underlying predictor to avoid thread race conditions
+# Run a dummy inference to warm up
+try:
+    dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+    pose_model(dummy_frame, verbose=False)
+    print("Pose model warmed up.")
+except Exception as e:
+    print(f"Warning: Pose model warmup failed: {e}")
 
 # Stage 2: Specialist for smoking detection (fine-grained)
 # We look for smoking_specialist.pt. If missing, get_model defaults to yolov8n.pt
 smoking_specialist = get_model("smoking_specialist", "detect")
+try:
+    smoking_specialist(dummy_frame, verbose=False)
+    print("Specialist model warmed up.")
+except Exception as e:
+    print(f"Warning: Specialist model warmup failed: {e}")
 
 # --- MQTT Setup ---
 mqtt_client = mqtt.Client()
@@ -231,7 +247,9 @@ def is_hand_near_face(keypoints, box):
     r_wrist = kp[10]
     
     box_h = box[3] - box[1]
-    threshold = box_h * 0.15 # 15% of height
+    # Relaxed threshold: Increased from 0.15 to 0.25 (25% of height)
+    # This allows for more tolerance in hand-to-face distance
+    threshold = box_h * POSE_HEURISTIC_THRESHOLD
     
     detected = False
     if nose[2] > 0.5 and l_wrist[2] > 0.5:
@@ -274,14 +292,17 @@ def process_smoking(cam_id, frame):
                 box_np = box.cpu().numpy()
                 
                 # Heuristic: Hand near face?
-                if is_hand_near_face(keypoints, box_np):
+                is_near = is_hand_near_face(keypoints, box_np)
+                if is_near:
+                    print(f"[{cam_id}] Pose Heuristic Triggered: Hand near face detected.")
                     # Stage 2: Specialist Verification
                     roi_img, (rx1, ry1, rx2, ry2) = get_upper_body_crop(frame, box_np)
                     
                     if roi_img.size > 0:
                         # Run specialist model on ROI
                         # conf=0.4 slightly lower because small object
-                        spec_results = smoking_specialist(roi_img, conf=0.4, verbose=False) 
+                        # Adjusting threshold to 0.25 to improve recall for smoking
+                        spec_results = smoking_specialist(roi_img, conf=SMOKING_SPECIALIST_CONF, verbose=False) 
                         
                         has_target = False
                         for sr in spec_results:
@@ -291,6 +312,7 @@ def process_smoking(cam_id, frame):
                             # In production, check: sr.names[int(cls)] in ['cigarette', 'smoke']
                             if len(sr.boxes) > 0:
                                 has_target = True
+                                print(f"[{cam_id}] Specialist Confirmed: Found target in ROI (Conf > {SMOKING_SPECIALIST_CONF}).")
                                 # Draw ROI box and specialist detections on main frame for evidence
                                 extra_annotations.append({
                                     'box': [rx1, ry1, rx2, ry2],
@@ -308,6 +330,11 @@ def process_smoking(cam_id, frame):
                         
                         if has_target:
                             detected_smoking = True
+                    else:
+                        print(f"[{cam_id}] Warning: ROI image empty.")
+                else:
+                    # Optional: Print verbose log if needed for debugging why pose failed
+                    pass
 
     if detected_smoking:
         current_time = time.time()
@@ -330,7 +357,7 @@ def process_smoking(cam_id, frame):
             print(f"[{cam_id}] Smoking Event Published (Cascade Confirmed)")
             last_alert_times[alert_key] = current_time
 
-def process_occupancy(cam_id, frame):
+def process_occupancy(cam_id, frame, fps_counter=0):
     if cam_id not in camera_states:
         camera_states[cam_id] = PersonState(patience_seconds=STATE_PATIENCE)
     state_machine = camera_states[cam_id]
@@ -379,9 +406,14 @@ def process_occupancy(cam_id, frame):
             last_alert_times[alert_key] = current_time
             
     state_machine.last_alert_state = current_state
+    
+    # Send status update every time to prevent "stuck" states, or at least log debug info
     is_occupied = "1" if current_state in ["ACTIVE", "POTENTIAL"] else "0"
     topic = f"ai/status/occupancy/{cam_id}"
     mqtt_client.publish(topic, is_occupied)
+    # Debug print to trace state changes
+    if fps_counter % 200 == 0: # Print occasionally
+         print(f"[{cam_id}] Occupancy State: {current_state} (Score: {avg_score:.2f}) -> MQTT: {is_occupied}")
 
 def stream_worker(stream_config, task_type):
     if 'source_url' in stream_config:
@@ -406,9 +438,13 @@ def stream_worker(stream_config, task_type):
         fps_counter += 1
         if task_type == "smoking" and fps_counter % 12 == 0:
             process_smoking(cam_id, frame)
-        elif task_type == "occupancy" and fps_counter % 50 == 0:
-            process_occupancy(cam_id, frame)
-            fps_counter = 0
+        elif task_type == "occupancy":
+            # Process more frequently (every 15 frames instead of 50) to catch movement better
+            # Reset counter only when it gets very large to avoid overflow, not on every process
+            if fps_counter % 15 == 0:
+                 process_occupancy(cam_id, frame, fps_counter)
+        
+        if fps_counter > 10000: fps_counter = 0
     cap.release()
 
 if __name__ == "__main__":

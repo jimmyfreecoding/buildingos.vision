@@ -34,6 +34,24 @@ services:
       - default
       - buildingos-prod-network
 
+  # Debug Engine (For Visualization)
+  debug-engine:
+    build: 
+      context: ./ai_engine
+      dockerfile: Dockerfile.dev
+    command: python /app/src/debug_server.py
+    environment:
+      - CONFIG_PATH=/app/config/config.json
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./ai_engine/models:/app/models
+      - ./ai_engine/config:/app/config
+      - ./ai_engine/src:/app/src
+    networks:
+      - default
+      - buildingos-prod-network
+
   # Node-RED
   node-red:
     image: nodered/node-red:latest

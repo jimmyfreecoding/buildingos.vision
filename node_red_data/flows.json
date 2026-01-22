@@ -7,28 +7,6 @@
         "info": ""
     },
     {
-        "id": "3cc11d24.ff01a2",
-        "type": "mqtt-broker",
-        "name": "EMQX",
-        "broker": "emqx",
-        "port": "1883",
-        "clientid": "",
-        "autoConnect": true,
-        "usetls": false,
-        "protocolVersion": "4",
-        "keepalive": "60",
-        "cleansession": true,
-        "birthTopic": "",
-        "birthQos": "0",
-        "birthPayload": "",
-        "closeTopic": "",
-        "closeQos": "0",
-        "closePayload": "",
-        "willTopic": "",
-        "willQos": "0",
-        "willPayload": ""
-    },
-    {
         "id": "0e45c8c7cafe4e98",
         "type": "mqtt-broker",
         "name": "mqtt服务器",
@@ -71,6 +49,7 @@
         "nl": false,
         "rap": true,
         "rh": 0,
+        "inputs": 0,
         "x": 160,
         "y": 100,
         "wires": [
@@ -145,6 +124,7 @@
         "nl": false,
         "rap": true,
         "rh": 0,
+        "inputs": 0,
         "x": 160,
         "y": 300,
         "wires": [
@@ -158,7 +138,7 @@
         "type": "debug",
         "z": "f6f2187d.f17ca8",
         "name": "Occupancy Debug",
-        "active": true,
+        "active": false,
         "tosidebar": true,
         "console": false,
         "tostatus": false,
@@ -182,6 +162,7 @@
         "nl": false,
         "rap": true,
         "rh": 0,
+        "inputs": 0,
         "x": 160,
         "y": 200,
         "wires": [

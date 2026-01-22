@@ -36,6 +36,8 @@
     "model_params": {
         "smoking_conf": 0.5,
         "occupancy_conf": 0.4,
-        "state_patience": 120
+        "state_patience": 120,
+        "smoking_specialist_conf": 0.7,
+        "pose_heuristic_threshold": 0.40
     }
 }
