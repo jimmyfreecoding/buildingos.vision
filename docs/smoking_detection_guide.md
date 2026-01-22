@@ -78,7 +78,38 @@ docker-compose -f buildingos.vision.dev.yml exec ai-engine yolo detect train \
 *   `epochs=50`: 训练 50 轮（通常 30-50 轮即可达到不错效果）。
 *   `project=...`: 训练结果保存路径。
 
-### 2.3 步骤三：部署模型
+### 2.3 训练中断与恢复 (Resume Training)
+
+如果训练过程中因断电或程序崩溃而中断，您不需要重新开始。YOLO 会自动保存 `last.pt`，您可以从中断点继续训练。
+
+**恢复训练命令**:
+```powershell
+docker-compose -f buildingos.vision.dev.yml exec ai-engine yolo detect train \
+    resume \
+    model=/app/models/train/smoking_run/weights/last.pt
+```
+*注意：必须指定 `last.pt` 路径，并加上 `resume` 关键字。*
+
+### 2.4 训练结果解读
+
+训练完成后，控制台会输出最终的评估指标。关键指标解释如下：
+
+*   **Epochs**: 训练轮数（例如 50/50）。
+*   **mAP50**: 平均精度均值（IoU=0.5）。**这是最重要的指标**。
+    *   `> 0.8`: 优秀，模型非常可靠。
+    *   `0.6 - 0.8`: 良好，可以使用。
+    *   `< 0.5`: 较差，可能需要更多数据或调整参数。
+*   **mAP50-95**: 更严格的精度指标。通常比 mAP50 低，0.4-0.5 已经算不错。
+*   **Speed**: 推理速度（Inference Time），越低越好。
+
+**示例输出**:
+```
+Class     Images  Instances      Box(P          R      mAP50  mAP50-95)
+all        753       1144      0.824      0.769      0.832      0.488
+```
+*解读：mAP50 为 83.2%，说明模型性能优秀。*
+
+### 2.5 步骤三：部署模型
 
 训练完成后，新的权重文件会生成在容器内的 `/app/models/train/smoking_run/weights/best.pt`。
 
@@ -94,7 +125,7 @@ docker-compose -f buildingos.vision.dev.yml exec ai-engine yolo detect train \
     docker-compose -f buildingos.vision.dev.yml restart ai-engine
     ```
 
-### 2.4 验证
+### 2.6 验证
 
 1.  查看日志确认模型加载成功：
     ```bash
