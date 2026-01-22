@@ -67,6 +67,9 @@ def process_frame(frame, models):
     results = pose_model(frame, verbose=False, conf=SMOKING_CONF)
     annotated_frame = results[0].plot() # Draw skeleton
     
+    # Collect all debug thumbnails to draw them at the end
+    all_debug_thumbnails = []
+
     for res in results:
         # Loop through boxes regardless of ID (inference only)
         if res.boxes:
@@ -75,50 +78,80 @@ def process_frame(frame, models):
                 box_np = box.cpu().numpy()
                 x1, y1, x2, y2 = map(int, box_np)
                 
-                # Check heuristic
-                # Draw debug info for distance
+                # New Logic: Direct Hand ROI Detection
+                # Ignore hand-to-face distance, check all hands
                 nose = kp[0]
                 l_wrist = kp[9]
                 r_wrist = kp[10]
-                box_h = box_np[3] - box_np[1]
-                threshold = box_h * POSE_HEURISTIC_THRESHOLD
                 
-                # Debug Text
-                dist_l = np.linalg.norm(nose[:2] - l_wrist[:2]) if l_wrist[2] > 0.3 else 9999
-                dist_r = np.linalg.norm(nose[:2] - r_wrist[:2]) if r_wrist[2] > 0.3 else 9999
+                hands_to_check = []
+                if l_wrist[2] > 0.3: hands_to_check.append((l_wrist[:2], "Left Hand"))
+                if r_wrist[2] > 0.3: hands_to_check.append((r_wrist[:2], "Right Hand"))
                 
-                debug_txt = f"H:{int(box_h)} T:{int(threshold)} L:{int(dist_l)}({l_wrist[2]:.2f}) R:{int(dist_r)}({r_wrist[2]:.2f})"
-                # Ensure y1-30 is visible
-                text_y = max(30, y1 - 30)
-                cv2.putText(annotated_frame, debug_txt, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-                if is_hand_near_face(kp, box_np):
-                    # Draw Yellow Box for ROI Trigger
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                    cv2.putText(annotated_frame, "Pose Trigger", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                for hand_pt, hand_name in hands_to_check:
+                    hx, hy = map(int, hand_pt)
                     
-                    # 2. Specialist Check
-                    # Crop ROI
+                    # Crop ROI around hand (320x320)
+                    # Increased to 320 to provide more context and handle occlusions
+                    roi_size = 320
                     h, w = frame.shape[:2]
-                    crop_h = (y2 - y1) * 0.5
-                    cy1, cy2 = max(0, y1-20), min(h, int(y1+crop_h+20))
-                    cx1, cx2 = max(0, x1-20), min(w, x2+20)
-                    roi = frame[cy1:cy2, cx1:cx2]
+                    x1_roi = max(0, hx - roi_size//2)
+                    y1_roi = max(0, hy - roi_size//2)
+                    x2_roi = min(w, hx + roi_size//2)
+                    y2_roi = min(h, hy + roi_size//2)
+                    
+                    # IMPORTANT: We crop from 'frame' (the clean original image)
+                    # NOT 'annotated_frame' (which has the lines drawn on it)
+                    roi = frame[y1_roi:y2_roi, x1_roi:x2_roi]
                     
                     if roi.size > 0:
-                        spec_results = specialist(roi, conf=SMOKING_SPECIALIST_CONF, verbose=False)
+                        # Create a debug thumbnail
+                        thumb = cv2.resize(roi, (150, 150))
+                        # Add label with Person ID
+                        label = f"P{i+1} {hand_name.split()[0]}" 
+                        cv2.putText(thumb, label, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        all_debug_thumbnails.append(thumb)
+
+                        # Draw ROI debug box (Cyan)
+                        cv2.rectangle(annotated_frame, (x1_roi, y1_roi), (x2_roi, y2_roi), (255, 255, 0), 1)
+                    
+                        # Use config confidence and enable agnostic NMS for better recall
+                        spec_results = specialist(roi, conf=SMOKING_SPECIALIST_CONF, verbose=False, agnostic_nms=True)
                         for sr in spec_results:
                             if len(sr.boxes) > 0:
                                 # Found Smoking!
-                                # Map back coords
                                 for sbox in sr.boxes.xyxy:
                                     sx1, sy1, sx2, sy2 = sbox.cpu().numpy()
-                                    fx1, fy1 = cx1 + int(sx1), cy1 + int(sy1)
-                                    fx2, fy2 = cx1 + int(sx2), cy1 + int(sy2)
+                                    fx1, fy1 = x1_roi + int(sx1), y1_roi + int(sy1)
+                                    fx2, fy2 = x1_roi + int(sx2), y1_roi + int(sy2)
                                     
                                     # Draw Red Box
                                     cv2.rectangle(annotated_frame, (fx1, fy1), (fx2, fy2), (0, 0, 255), 3)
-                                    cv2.putText(annotated_frame, "SMOKING CONFIRMED", (fx1, fy1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                                    cv2.putText(annotated_frame, f"SMOKING ({hand_name})", (fx1, fy1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    
+    # Draw ALL debug thumbnails on the main frame
+    # Vertical stack on the left, wrap to next column if needed
+    y_offset = 50
+    x_offset = 10
+    for thumb in all_debug_thumbnails:
+        th, tw = thumb.shape[:2]
+        if y_offset + th < annotated_frame.shape[0]:
+            # Draw white border
+            cv2.rectangle(annotated_frame, (x_offset, y_offset), (x_offset+tw, y_offset+th), (255,255,255), 2)
+            annotated_frame[y_offset:y_offset+th, x_offset:x_offset+tw] = thumb
+            y_offset += th + 10
+        else:
+             # Wrap to next column
+             x_offset += tw + 10
+             y_offset = 50
+             if x_offset + tw < annotated_frame.shape[1] and y_offset + th < annotated_frame.shape[0]:
+                cv2.rectangle(annotated_frame, (x_offset, y_offset), (x_offset+tw, y_offset+th), (255,255,255), 2)
+                annotated_frame[y_offset:y_offset+th, x_offset:x_offset+tw] = thumb
+                y_offset += th + 10
+                
+                # Old logic commented out for reference
+                # if is_hand_near_face(kp, box_np):
+                # ...
 
     return annotated_frame
 
