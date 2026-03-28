@@ -28,7 +28,7 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir "numpy<2.0.0" paho-mqtt && \
     pip3 install --no-cache-dir ultralytics --no-deps && \
-    pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0"
+    pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama sympy polars ultralytics-thop
 
 # 复制业务代码
 COPY src/ ./src/

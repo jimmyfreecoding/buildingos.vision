@@ -6,7 +6,7 @@
     },
     "zlm": {
         "api_url": "http://zlm:80/index/api",
-        "secret": "6GSUvTxPUCFa4PCdpYj56KJWjx4Wa7KY"
+        "secret": "buildingos_edge_secret_2026"
     },
     "media": {
         "storage_path": "/app/www/captures",
