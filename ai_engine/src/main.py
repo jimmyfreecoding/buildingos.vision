@@ -463,10 +463,12 @@ def get_upper_body_crop(frame, box):
 def capture_frame(stream_url):
     """Captures a single frame from the given RTSP URL."""
     try:
-        os.environ["OPENCV_VIDEOIO_PRIORITY_LIST"] = "FFMPEG,GSTREAMER,V4L2"
-        # Reduce timeout for OpenCV so it doesn't block forever
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "timeout;2000000|rtsp_transport;tcp"
-        cap = cv2.VideoCapture(stream_url, getattr(cv2, 'CAP_FFMPEG', 1900))
+        # Instead of OpenCV pulling RTSP directly from ZLM, 
+        # let's try to pull via HTTP-FLV or just use basic OpenCV without env overrides
+        # that might be causing "Unable to open RTSP for listening"
+        os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+        
+        cap = cv2.VideoCapture(stream_url)
     except Exception:
         cap = cv2.VideoCapture(stream_url)
     
@@ -565,8 +567,18 @@ def process_occupancy_areas():
                     if 'active_streams' in locals() and zlm_stream_id not in active_streams:
                         print(f"[{cam_id}] Skipping capture because stream is not ready in ZLM.")
                         continue
+                    
+                    # Workaround: Use ZLM's http-flv or snapshot instead of RTSP to avoid OpenCV "Unable to open RTSP for listening" error
+                    # Since ZLM is converting to all formats, we can pull the http-flv stream which OpenCV handles better for polling
+                    fallback_url = stream_url.replace("rtsp://zlm:554/live", "http://zlm:80/live").replace(".sdp", ".flv")
+                    if not fallback_url.endswith(".flv"):
+                        fallback_url += ".flv"
                         
-                    frame = capture_frame(stream_url)
+                    frame = capture_frame(fallback_url)
+                    
+                    if frame is None:
+                         # Fallback to RTSP if FLV fails
+                         frame = capture_frame(stream_url)
                     
                     if frame is not None:
                         # Add logic to calculate motion score if needed, currently 0
