@@ -68,8 +68,8 @@ app.post('/api/config', (req, res) => {
     try {
         fs.writeFileSync(CONFIG_PATH, JSON.stringify(req.body, null, 4), 'utf8');
         // 配置保存后，重启 ai-engine 容器使其生效
-        // 修正为正确的容器名称或者通过 docker compose 重启
-        exec('docker compose -f /host_project/docker-compose.yml restart ai-engine', (err) => {
+        // 由于在容器内执行，我们直接重启指定的容器名
+        exec('docker restart buildingos-vision-ai-engine-1', (err) => {
              if (err) console.error("Failed to restart ai-engine container:", err);
         });
         res.json({ message: 'Config saved successfully and AI Engine restarted.' });
