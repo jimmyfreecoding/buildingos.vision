@@ -474,7 +474,22 @@ def capture_frame(stream_url):
 def process_occupancy_areas():
     """Polls all configured areas periodically."""
     print("Starting area polling worker...")
+    
+    # Register all occupancy stream proxies once at startup
+    occupancy_streams = config['streams'].get('occupancy', [])
+    for stream_conf in occupancy_streams:
+        if 'source_url' in stream_conf:
+            add_stream_proxy(stream_conf)
+            
+    # Give ZLM a brief moment to proxy streams initially
+    time.sleep(5)
+    
     while True:
+        # Re-register proxy periodically in case ZLM restarted or dropped them
+        for stream_conf in occupancy_streams:
+            if 'source_url' in stream_conf:
+                add_stream_proxy(stream_conf)
+                
         try:
             # Group streams by area
             area_streams = {}
