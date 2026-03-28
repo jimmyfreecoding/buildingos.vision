@@ -4,7 +4,7 @@ services:
   zlm:
     image: zlmediakit/zlmediakit:master
     ports:
-      - "10080:80"     # API 及静态文件 (包含我们的 Web Manager 前端)
+      - "10081:80"     # API 及静态文件 (包含我们的 Web Manager 前端)。注意：不要使用10080，会被浏览器拦截
       - "10554:554"    # RTSP 流
       - "11935:1935"   # RTMP 流
       - "18080:8080"   # HTTP-FLV/WS-FLV
