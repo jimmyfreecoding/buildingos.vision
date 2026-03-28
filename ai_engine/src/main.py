@@ -62,12 +62,16 @@ def add_stream_proxy(stream_config):
         return
 
     api_url = f"{ZLM_API_URL}/addStreamProxy"
+    
+    # 提取并处理 url 参数，确保特殊字符（如 @）被正确编码
+    source_url = stream_config['source_url']
+    
     params = {
         'secret': ZLM_SECRET,
         'vhost': '__defaultVhost__',
         'app': 'live',
         'stream': stream_config.get('zlm_stream_id', stream_config['id']),
-        'url': stream_config['source_url'],
+        'url': source_url,
         'enable_rtsp': 1,
         'enable_rtmp': 1,
         'enable_hls': 0,
@@ -75,11 +79,11 @@ def add_stream_proxy(stream_config):
     }
     
     try:
+        # 对参数进行 urlencode，这会自动将源地址中的 @ 等特殊字符转换为 %40 等
         query_string = urllib.parse.urlencode(params)
         full_url = f"{api_url}?{query_string}"
-        print(f"Registering stream proxy: {stream_config['id']} -> ZLM (URL: {full_url})")
+        print(f"Registering stream proxy: {stream_config['id']} -> ZLM")
         
-        # Add a timeout to prevent hanging, and handle errors gracefully
         req = urllib.request.Request(full_url)
         with urllib.request.urlopen(req, timeout=10) as response:
             resp_data = json.loads(response.read().decode())
