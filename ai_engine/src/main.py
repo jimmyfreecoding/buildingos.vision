@@ -133,7 +133,7 @@ def capture_event_media(cam_id, frame, event_type, results=None, model_type="det
 
 def record_clip(stream_url, output_path, duration):
     try:
-        cap = cv2.VideoCapture(stream_url)
+        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
         if not cap.isOpened():
             return
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -440,36 +440,44 @@ def process_occupancy(cam_id, frame, fps_counter=0):
          print(f"[{cam_id}] Occupancy State: {current_state} (Score: {avg_score:.2f}) -> MQTT: {is_occupied}")
 
 def stream_worker(stream_config, task_type):
-    if 'source_url' in stream_config:
-        add_stream_proxy(stream_config)
-        time.sleep(2)
     url = stream_config['url']
     cam_id = stream_config['id']
     cam_name = stream_config.get('name', cam_id)
     print(f"Starting worker for {cam_name} ({cam_id}) - Task: {task_type}")
-    cap = cv2.VideoCapture(url)
-    if not cap.isOpened():
-        print(f"[{cam_id}] Failed to open stream: {url}")
-        return
+    
     fps_counter = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            print(f"[{cam_id}] Stream interrupted. Retrying...")
-            time.sleep(2)
-            cap = cv2.VideoCapture(url)
+    while True: # Keep thread alive indefinitely
+        # Re-register proxy before attempting connection if stream drops or fails
+        if 'source_url' in stream_config:
+            add_stream_proxy(stream_config)
+            time.sleep(3) # Give ZLM a little more time to pull the stream
+
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            print(f"[{cam_id}] Failed to open stream: {url}. Retrying in 5 seconds...")
+            time.sleep(5)
             continue
-        fps_counter += 1
-        if task_type == "smoking" and fps_counter % 12 == 0:
-            process_smoking(cam_id, frame)
-        elif task_type == "occupancy":
-            # Process more frequently (every 15 frames instead of 50) to catch movement better
-            # Reset counter only when it gets very large to avoid overflow, not on every process
-            if fps_counter % 15 == 0:
-                 process_occupancy(cam_id, frame, fps_counter)
+            
+        print(f"[{cam_id}] Successfully connected to stream.")
         
-        if fps_counter > 10000: fps_counter = 0
-    cap.release()
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                print(f"[{cam_id}] Stream interrupted or EOF. Reconnecting...")
+                break # Break inner loop to trigger reconnection
+                
+            fps_counter += 1
+            if task_type == "smoking" and fps_counter % 12 == 0:
+                process_smoking(cam_id, frame)
+            elif task_type == "occupancy":
+                if fps_counter % 15 == 0:
+                     process_occupancy(cam_id, frame, fps_counter)
+            
+            if fps_counter > 10000: 
+                fps_counter = 0
+                
+        cap.release()
+        time.sleep(3) # Pause before reconnecting
 
 if __name__ == "__main__":
     threads = []
