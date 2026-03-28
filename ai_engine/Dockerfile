@@ -26,9 +26,9 @@ COPY requirements.txt .
 # 如果直接 pip install ultralytics，它可能会尝试去下载 x86/标准版的 torch 覆盖掉它。
 # 所以我们只更新 pip，并安装除了 torch 以外的依赖，或者让 ultralytics 忽略 torch 依赖
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir paho-mqtt && \
+    pip3 install --no-cache-dir "numpy<2.0.0" paho-mqtt && \
     pip3 install --no-cache-dir ultralytics --no-deps && \
-    pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python
+    pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0"
 
 # 复制业务代码
 COPY src/ ./src/

@@ -37,8 +37,8 @@ ALERT_COOLDOWN = config['model_params'].get('alert_cooldown', 30) # Default 30s 
 SMOKING_SPECIALIST_CONF = config['model_params'].get('smoking_specialist_conf', 0.25)
 POSE_HEURISTIC_THRESHOLD = config['model_params'].get('pose_heuristic_threshold', 0.25)
 
-ZLM_API_URL = config.get('zlm', {}).get('api_url', "http://zlm:80/index/api")
-ZLM_SECRET = config.get('zlm', {}).get('secret', "")
+ZLM_API_URL = os.getenv("ZLM_API", config.get('zlm', {}).get('api_url', "http://zlm:80/index/api"))
+ZLM_SECRET = os.getenv("ZLM_SECRET", config.get('zlm', {}).get('secret', ""))
 
 MEDIA_STORAGE_PATH = config.get('media', {}).get('storage_path', "/app/www/captures")
 MEDIA_BASE_URL = config.get('media', {}).get('base_url', "http://localhost:10080/captures")

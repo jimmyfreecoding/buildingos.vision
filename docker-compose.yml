@@ -1,16 +1,20 @@
 name: buildingos-vision
 services:
-  # 流媒体中转 (ZLMediaKit) - 同时作为前端 Web 服务器
+  # 流媒体中转 (ZLMediaKit)
   zlm:
     image: zlmediakit/zlmediakit:master
     ports:
-      - "10081:80"     # API 及静态文件 (包含我们的 Web Manager 前端)。注意：不要使用10080，会被浏览器拦截
+      - "10081:80"     # API 及静态文件。注意：不要使用10080
       - "10554:554"    # RTSP 流
       - "11935:1935"   # RTMP 流
       - "18080:8080"   # HTTP-FLV/WS-FLV
+    environment:
+      # 通过环境变量设置 ZLM 的全局秘钥，替代 config.ini 的静态配置
+      - ZLM_API_SECRET=buildingos_edge_secret_2026
+    command: ["/opt/media/bin/MediaServer", "-s", "buildingos_edge_secret_2026"]
     volumes:
-      - ./zlm/config.ini:/opt/media/conf/config.ini
-      - zlm_www_data:/opt/media/www/  # 使用命名卷，不再需要 chmod 777
+      # 移除写死的 config.ini，让 ZLM 完全由命令行参数驱动
+      - zlm_www_data:/opt/media/www/
     restart: always
 
   # 前端请求代理网关 (Nginx) - 用于托管 Web 界面并代理 /api
@@ -33,7 +37,6 @@ services:
       dockerfile: Dockerfile
     volumes:
       - web_frontend_data:/target_www/ # 将编译后的 dist 放入 Nginx 的专用卷
-    # 注意：这个任务不需要 depends_on zlm 了
 
   # AI 推理引擎 (关键，使用 GPU)
   ai-engine:
@@ -44,11 +47,12 @@ services:
     environment:
       - MQTT_BROKER=emqx
       - ZLM_API=http://zlm:80/index/api/
+      # 让 AI 引擎读取相同的秘钥环境变量
+      - ZLM_SECRET=buildingos_edge_secret_2026
     extra_hosts:
       - "emqx:host-gateway"
     volumes:
       - ./ai_engine/models:/app/models
-      # 修复：直接挂载宿主机目录，确保能读到初始的 config.json
       - ./ai_engine/config:/app/config
       - zlm_www_data:/app/www # 仍然挂载 zlm_www_data 用于保存截图和视频
     depends_on:
