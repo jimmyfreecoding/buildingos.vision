@@ -1,20 +1,29 @@
 name: buildingos.vision
 services:
-  # 流媒体中转
+  # 流媒体中转 (ZLMediaKit) - 同时作为前端 Web 服务器
   zlm:
     image: zlmediakit/zlmediakit:master
     ports:
-      - "10080:80"
-      - "10554:554"
-      - "11935:1935"
-      - "18080:8080"
+      - "10080:80"     # API 及静态文件 (包含我们的 Web Manager 前端)
+      - "10554:554"    # RTSP 流
+      - "11935:1935"   # RTMP 流
+      - "18080:8080"   # HTTP-FLV/WS-FLV
     volumes:
       - ./zlm/config.ini:/opt/media/conf/config.ini
-      # Mount record directory for file simulation if needed
-      - ./zlm/www:/opt/media/www/
+      - zlm_www_data:/opt/media/www/  # 使用命名卷，不再需要 chmod 777
     restart: always
 
-  # AI 推理引擎 (关键)
+  # 前端自动构建与部署任务 (执行完即退出)
+  web-manager-frontend-deploy:
+    build:
+      context: ./web_manager/frontend
+      dockerfile: Dockerfile
+    volumes:
+      - zlm_www_data:/target_www/ # 将编译后的 dist 放入 ZLM 的 www 目录
+    depends_on:
+      - zlm
+
+  # AI 推理引擎 (关键，使用 GPU)
   ai-engine:
     build: 
       context: ./ai_engine
@@ -27,16 +36,47 @@ services:
       - "emqx:host-gateway"
     volumes:
       - ./ai_engine/models:/app/models
-      - ./ai_engine/config:/app/config
+      - ai_config_data:/app/config # 使用命名卷存储配置文件
+      - zlm_www_data:/app/www      # 共享给 AI 引擎用于保存截图和视频
     depends_on:
       - zlm
     restart: always
 
-  # 业务逻辑编排
+  # 业务逻辑编排 (Node-RED)
   node-red:
     image: nodered/node-red:latest
     ports:
       - "11880:1880"
     volumes:
-      - ./node_red_data:/data
+      - node_red_data:/data # 使用命名卷
     restart: always
+
+  # 边缘网关管理系统后端 (Web Manager API)
+  web-manager-backend:
+    build:
+      context: ./web_manager/backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # 允许控制重启容器
+      - ./:/host_project                            # 允许执行 git pull / compose 操作
+      - ai_config_data:/app/ai_engine/config       # 挂载 AI 命名卷，允许后端读写 config.json
+    restart: always
+
+  # Docker 可视化管理 (Portainer)
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    restart: always
+
+# 声明所有的命名卷 (Docker 自动管理权限，物理存储在 /var/lib/docker/volumes/)
+volumes:
+  zlm_www_data:
+  ai_config_data:
+  node_red_data:
+  portainer_data:

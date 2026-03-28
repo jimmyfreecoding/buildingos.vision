@@ -19,3 +19,8 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Web Manager
+web_manager/**/node_modules/
+web_manager/frontend/dist/
+node_modules/

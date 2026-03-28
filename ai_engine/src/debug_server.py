@@ -83,13 +83,37 @@ def process_frame(frame, models):
                 nose = kp[0]
                 l_wrist = kp[9]
                 r_wrist = kp[10]
+                l_elbow = kp[7]
+                r_elbow = kp[8]
                 
                 hands_to_check = []
-                if l_wrist[2] > 0.3: hands_to_check.append((l_wrist[:2], "Left Hand"))
-                if r_wrist[2] > 0.3: hands_to_check.append((r_wrist[:2], "Right Hand"))
+                # Check Left Hand
+                if l_wrist[2] > 0.3: 
+                    if l_elbow[2] > 0.3:
+                         # Extrapolate direction from elbow to wrist to find hand center
+                         direction = l_wrist[:2] - l_elbow[:2]
+                         hand_center = l_wrist[:2] + direction * 0.4
+                         hands_to_check.append((hand_center, "Left Hand"))
+                    else:
+                         # Fallback to wrist if elbow not visible
+                         hands_to_check.append((l_wrist[:2], "Left Hand"))
+                
+                # Check Right Hand
+                if r_wrist[2] > 0.3: 
+                    if r_elbow[2] > 0.3:
+                         # Extrapolate direction from elbow to wrist to find hand center
+                         direction = r_wrist[:2] - r_elbow[:2]
+                         hand_center = r_wrist[:2] + direction * 0.4
+                         hands_to_check.append((hand_center, "Right Hand"))
+                    else:
+                         # Fallback to wrist if elbow not visible
+                         hands_to_check.append((r_wrist[:2], "Right Hand"))
                 
                 for hand_pt, hand_name in hands_to_check:
                     hx, hy = map(int, hand_pt)
+                    
+                    # Draw Estimated Hand Center (Magenta Dot)
+                    cv2.circle(annotated_frame, (hx, hy), 5, (255, 0, 255), -1)
                     
                     # Crop ROI around hand (320x320)
                     # Increased to 320 to provide more context and handle occlusions
