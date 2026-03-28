@@ -480,7 +480,15 @@ def process_occupancy_areas():
     print("Starting area polling worker...")
     
     while True:
-        occupancy_streams = config['streams'].get('occupancy', [])
+        # Load the latest config inside the loop to catch any webadmin changes
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                current_config = json.load(f)
+        except Exception as e:
+            print(f"Error reloading config: {e}")
+            current_config = config # fallback to global
+            
+        occupancy_streams = current_config.get('streams', {}).get('occupancy', [])
         
         # Check ZLM stream status periodically
         try:
@@ -507,7 +515,7 @@ def process_occupancy_areas():
         try:
             # Group streams by area
             area_streams = {}
-            for stream in config['streams'].get('occupancy', []):
+            for stream in occupancy_streams:
                 area_code = stream.get('areaCode', 'unknown_area')
                 if area_code not in area_streams:
                     area_streams[area_code] = []
@@ -579,13 +587,19 @@ def process_occupancy_areas():
                         payload["action"] = "off"
                         payload["level"] = 3
                         
-                    mqtt_client.publish(topic, json.dumps(payload))
-                    print(f"[{area_code}] Published Event: {event_type} -> Action: {payload.get('action')}")
+                    try:
+                        mqtt_client.publish(topic, json.dumps(payload))
+                        print(f"[{area_code}] Published Event: {event_type} -> Action: {payload.get('action')}")
+                    except Exception as mqtt_err:
+                        print(f"[{area_code}] Failed to publish event: {mqtt_err}")
                 
                 # Send periodic status update
                 is_occupied = "1" if current_state in ["ACTIVE", "POTENTIAL"] else "0"
                 status_topic = f"ai/status/occupancy/{area_code.replace('/', '_')}"
-                mqtt_client.publish(status_topic, is_occupied)
+                try:
+                    mqtt_client.publish(status_topic, is_occupied)
+                except Exception:
+                    pass
                 
         except Exception as e:
             print(f"Error in process_occupancy_areas: {e}")
