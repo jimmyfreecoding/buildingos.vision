@@ -9,12 +9,15 @@ services:
       - "11935:1935"   # RTMP 流
       - "18080:8080"   # HTTP-FLV/WS-FLV
     environment:
-      # 通过环境变量设置 ZLM 的全局秘钥，替代 config.ini 的静态配置
+      # 通过环境变量设置 ZLM 的全局秘钥
       - ZLM_API_SECRET=buildingos_edge_secret_2026
-    command: ["/opt/media/bin/MediaServer", "-s", "buildingos_edge_secret_2026"]
+    # 启动前通过 sed 自动将环境变量中的密钥同步到 config.ini 中，实现零接触配置
+    command: >
+      sh -c "sed 's/^secret=.*/secret='\"$$ZLM_API_SECRET\"'/g' /opt/media/conf/config.ini > /tmp/config.ini && cat /tmp/config.ini > /opt/media/conf/config.ini && /opt/media/bin/MediaServer -c /opt/media/conf/config.ini"
     volumes:
-      # 移除写死的 config.ini，让 ZLM 完全由命令行参数驱动
       - zlm_www_data:/opt/media/www/
+      # 映射配置文件以便持久化和自动修改
+      - ./zlm/config.ini:/opt/media/conf/config.ini
     restart: always
 
   # 前端请求代理网关 (Nginx) - 用于托管 Web 界面并代理 /api
