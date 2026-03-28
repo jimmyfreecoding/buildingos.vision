@@ -466,7 +466,8 @@ def capture_frame(stream_url):
         # Instead of OpenCV pulling RTSP directly from ZLM, 
         # let's try to pull via HTTP-FLV or just use basic OpenCV without env overrides
         # that might be causing "Unable to open RTSP for listening"
-        os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+        if "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ:
+            del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
         
         cap = cv2.VideoCapture(stream_url)
     except Exception:
@@ -570,13 +571,17 @@ def process_occupancy_areas():
                     
                     # Workaround: Use ZLM's http-flv or snapshot instead of RTSP to avoid OpenCV "Unable to open RTSP for listening" error
                     # Since ZLM is converting to all formats, we can pull the http-flv stream which OpenCV handles better for polling
-                    fallback_url = stream_url.replace("rtsp://zlm:554/live", "http://zlm:80/live").replace(".sdp", ".flv")
-                    if not fallback_url.endswith(".flv"):
-                        fallback_url += ".flv"
+                    # ZLM default FLV url format: http://zlm:80/live/stream_id.live.flv
+                    
+                    # Ensure we extract the actual stream ID properly from the URL
+                    zlm_stream_id = stream_conf.get('zlm_stream_id', cam_id)
+                    fallback_url = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
                         
+                    print(f"[{cam_id}] Attempting to capture from FLV: {fallback_url}")
                     frame = capture_frame(fallback_url)
                     
                     if frame is None:
+                         print(f"[{cam_id}] FLV failed, falling back to RTSP: {stream_url}")
                          # Fallback to RTSP if FLV fails
                          frame = capture_frame(stream_url)
                     
