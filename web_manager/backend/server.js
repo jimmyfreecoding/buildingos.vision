@@ -86,8 +86,7 @@ app.post('/api/config', (req, res) => {
         const zlmSecret = newConfig.zlm?.secret || "buildingos_edge_secret_2026";
         
         // --- Full Synchronization with ZLM ---
-        // Instead of just relying on what was deleted in this specific save,
-        // we query ZLM for ALL currently active streams, and if any stream in ZLM
+        // Query ZLM for ALL currently active streams, and if any stream in ZLM
         // is NOT in our newConfig, we force close it.
         const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
         
@@ -99,18 +98,25 @@ app.post('/api/config', (req, res) => {
                     const zlmResponse = JSON.parse(stdout);
                     if (zlmResponse.code === 0 && zlmResponse.data) {
                         // We only care about unique stream IDs (app=live)
-                        // ZLM returns multiple entries for the same stream (rtsp, rtmp, hls, etc.),
-                        // but closing one by app and stream name closes the source.
                         const activeStreamIds = new Set(zlmResponse.data.map(item => item.stream));
                         
                         activeStreamIds.forEach(streamId => {
                             if (!newStreamIds.has(streamId)) {
                                 // This stream exists in ZLM but NOT in our new config! Kill it.
-                                const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
-                                console.log(`[SYNC] Found orphaned stream proxy in ZLM (${streamId}). Closing: ${closeUrl}`);
-                                exec(`curl -s "${closeUrl}"`, (closeErr, closeStdout) => {
-                                    if (closeErr) console.error(`[SYNC] Failed to close orphaned stream ${streamId}:`, closeErr);
-                                    else console.log(`[SYNC] ZLM close response for ${streamId}:`, closeStdout);
+                                // NOTE: For pull streams (addStreamProxy), close_streams might not be enough
+                                // We should use delStreamProxy with the key.
+                                // In ZLM, the key for a proxy is usually <vhost>/<app>/<stream>
+                                const proxyKey = `__defaultVhost__/live/${streamId}`;
+                                const delProxyUrl = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${proxyKey}`;
+                                
+                                console.log(`[SYNC] Found orphaned stream proxy in ZLM (${streamId}). Deleting proxy: ${delProxyUrl}`);
+                                exec(`curl -s "${delProxyUrl}"`, (delErr, delStdout) => {
+                                    if (delErr) console.error(`[SYNC] Failed to delete proxy for ${streamId}:`, delErr);
+                                    else console.log(`[SYNC] ZLM del proxy response for ${streamId}:`, delStdout);
+                                    
+                                    // Also forcefully close any active players/connections for this stream
+                                    const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
+                                    exec(`curl -s "${closeUrl}"`, () => {});
                                 });
                             }
                         });
