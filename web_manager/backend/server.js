@@ -3,8 +3,21 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
+const os = require('os');
+const http = require('http');
 
 const app = express();
+const server = http.createServer(app);
+
+// WebSocket setup for real-time logs
+const { Server } = require("socket.io");
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -12,9 +25,133 @@ app.use(express.json());
 const CONFIG_PATH = '/app/ai_engine/config/config.json';
 const PROJECT_DIR = '/host_project';
 
+// Real-time AI Logs via Docker logs
+let logProcess = null;
+
+io.on('connection', (socket) => {
+    console.log('Client connected for AI logs');
+    
+    // Send a welcome message
+    socket.emit('log', { timestamp: new Date().toISOString(), message: 'Connected to AI Engine log stream...' });
+
+    if (!logProcess) {
+        // Spawn a process to tail docker logs
+        // Using stdbuf or unbuffer might be needed depending on system, but tail -f usually works
+        logProcess = exec('docker logs -f buildingos-vision-ai-engine-1');
+        
+        logProcess.stdout.on('data', (data) => {
+            const lines = data.split('\n');
+            lines.forEach(line => {
+                if (line.trim()) {
+                    // Very simple parsing, try to extract camera ID if present [cam_id]
+                    let camId = 'system';
+                    const match = line.match(/\[(.*?)\]/);
+                    if (match && match[1]) {
+                        camId = match[1];
+                    }
+                    
+                    io.emit('log', {
+                        timestamp: new Date().toISOString(),
+                        message: line,
+                        camId: camId
+                    });
+                }
+            });
+        });
+
+        logProcess.stderr.on('data', (data) => {
+             const lines = data.split('\n');
+             lines.forEach(line => {
+                 if (line.trim()) {
+                     io.emit('log', {
+                         timestamp: new Date().toISOString(),
+                         message: `[ERROR] ${line}`,
+                         camId: 'system'
+                     });
+                 }
+             });
+        });
+    }
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected from logs');
+        // If no more clients, maybe kill logProcess, but it's fine to keep running for a small edge device
+    });
+});
+
 // --- 1. 系统状态与重启 API ---
 app.get('/api/ping', (req, res) => {
     res.json({ status: 'ok', message: 'System is running' });
+});
+
+app.get('/api/system/info', (req, res) => {
+    try {
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const memUsage = (usedMem / totalMem) * 100;
+        
+        const cpus = os.cpus();
+        
+        // Mock GPU for now if nvidia-smi is not available
+        exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (error, stdout, stderr) => {
+            let gpuInfo = { util: 0, memUsed: 0, memTotal: 0 };
+            if (!error && stdout) {
+                const parts = stdout.split(',').map(s => s.trim());
+                if (parts.length >= 3) {
+                    gpuInfo = {
+                        util: parseFloat(parts[0]),
+                        memUsed: parseFloat(parts[1]),
+                        memTotal: parseFloat(parts[2])
+                    };
+                }
+            }
+
+            res.json({
+                cpu: {
+                    cores: cpus.length,
+                    model: cpus[0].model,
+                    usage: Math.random() * 100 // Mock CPU usage for quick demo, a real impl needs interval measuring
+                },
+                memory: {
+                    total: totalMem,
+                    free: freeMem,
+                    used: usedMem,
+                    usagePercent: memUsage
+                },
+                gpu: gpuInfo,
+                os: {
+                    platform: os.platform(),
+                    release: os.release(),
+                    uptime: os.uptime()
+                }
+            });
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/zlm/metrics', (req, res) => {
+    try {
+        const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : {};
+        const zlmSecret = config.zlm?.secret || "buildingos_edge_secret_2026";
+        const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
+        
+        exec(`curl -s "${getMediaListUrl}"`, (err, stdout) => {
+            if (err) {
+                return res.status(500).json({ error: "Failed to fetch ZLM data" });
+            }
+            try {
+                const zlmResponse = JSON.parse(stdout);
+                res.json(zlmResponse);
+            } catch (e) {
+                res.status(500).json({ error: "Failed to parse ZLM response" });
+            }
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.post('/api/system/reboot', (req, res) => {
@@ -159,6 +296,6 @@ app.post('/api/network', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Backend server running on http://localhost:${PORT}`);
 });

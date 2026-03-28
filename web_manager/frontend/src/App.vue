@@ -11,6 +11,14 @@
         router
         :default-active="$route.path"
       >
+        <el-menu-item index="/dashboard">
+          <el-icon><Monitor /></el-icon>
+          <span>系统概览</span>
+        </el-menu-item>
+        <el-menu-item index="/ai-monitor">
+          <el-icon><DataLine /></el-icon>
+          <span>AI 实时监控</span>
+        </el-menu-item>
         <el-menu-item index="/cameras">
           <el-icon><VideoCamera /></el-icon>
           <span>流媒体配置</span>
@@ -44,6 +52,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { VideoCamera, Setting, Connection, SwitchButton, Monitor, DataLine } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 

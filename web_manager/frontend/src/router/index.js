@@ -3,7 +3,15 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   {
     path: '/',
-    redirect: '/cameras'
+    redirect: '/dashboard'
+  },
+  {
+    path: '/dashboard',
+    component: () => import('../views/Dashboard.vue')
+  },
+  {
+    path: '/ai-monitor',
+    component: () => import('../views/AIMonitor.vue')
   },
   {
     path: '/cameras',
