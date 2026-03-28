@@ -133,7 +133,12 @@ def capture_event_media(cam_id, frame, event_type, results=None, model_type="det
 
 def record_clip(stream_url, output_path, duration):
     try:
-        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
+        try:
+            os.environ["OPENCV_VIDEOIO_PRIORITY_LIST"] = "FFMPEG,GSTREAMER,V4L2"
+            cap = cv2.VideoCapture(stream_url, getattr(cv2, 'CAP_FFMPEG', 1900))
+        except Exception as e:
+            cap = cv2.VideoCapture(stream_url)
+            
         if not cap.isOpened():
             return
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -452,9 +457,19 @@ def stream_worker(stream_config, task_type):
             add_stream_proxy(stream_config)
             time.sleep(3) # Give ZLM a little more time to pull the stream
 
-        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        try:
+            # Fallback for cv2.CAP_FFMPEG missing in some environments, though it should be there.
+            os.environ["OPENCV_VIDEOIO_PRIORITY_LIST"] = "FFMPEG,GSTREAMER,V4L2"
+            # In some OpenCV builds, CAP_FFMPEG might not be available, use literal value 1900 or fallback
+            cap = cv2.VideoCapture(url, getattr(cv2, 'CAP_FFMPEG', 1900))
+        except Exception as e:
+            print(f"[{cam_id}] Warning: Failed to use CAP_FFMPEG directly, falling back to default. Error: {e}")
+            cap = cv2.VideoCapture(url)
+            
+        # Give OpenCV a tiny moment to establish the connection before checking isOpened
+        time.sleep(1)
         if not cap.isOpened():
-            print(f"[{cam_id}] Failed to open stream: {url}. Retrying in 5 seconds...")
+            print(f"[{cam_id}] Failed to open stream: {url}. OpenCV CAP_FFMPEG returned False. Retrying in 5 seconds...")
             time.sleep(5)
             continue
             

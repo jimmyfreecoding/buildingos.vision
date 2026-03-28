@@ -66,13 +66,67 @@ app.get('/api/config', (req, res) => {
 
 app.post('/api/config', (req, res) => {
     try {
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(req.body, null, 4), 'utf8');
+        const oldConfig = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : { streams: { smoking: [], occupancy: [] } };
+        const newConfig = req.body;
+        
+        // Save new config
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(newConfig, null, 4), 'utf8');
+        
+        // Find deleted streams
+        const oldStreams = [
+            ...(oldConfig.streams?.smoking || []),
+            ...(oldConfig.streams?.occupancy || [])
+        ];
+        const newStreams = [
+            ...(newConfig.streams?.smoking || []),
+            ...(newConfig.streams?.occupancy || [])
+        ];
+        
+        const newStreamIds = new Set(newStreams.map(s => s.id));
+        const zlmSecret = newConfig.zlm?.secret || "buildingos_edge_secret_2026";
+        
+        // --- Full Synchronization with ZLM ---
+        // Instead of just relying on what was deleted in this specific save,
+        // we query ZLM for ALL currently active streams, and if any stream in ZLM
+        // is NOT in our newConfig, we force close it.
+        const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
+        
+        exec(`curl -s "${getMediaListUrl}"`, (err, stdout) => {
+            if (err) {
+                console.error(`Failed to fetch media list from ZLM for sync:`, err);
+            } else {
+                try {
+                    const zlmResponse = JSON.parse(stdout);
+                    if (zlmResponse.code === 0 && zlmResponse.data) {
+                        // We only care about unique stream IDs (app=live)
+                        // ZLM returns multiple entries for the same stream (rtsp, rtmp, hls, etc.),
+                        // but closing one by app and stream name closes the source.
+                        const activeStreamIds = new Set(zlmResponse.data.map(item => item.stream));
+                        
+                        activeStreamIds.forEach(streamId => {
+                            if (!newStreamIds.has(streamId)) {
+                                // This stream exists in ZLM but NOT in our new config! Kill it.
+                                const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
+                                console.log(`[SYNC] Found orphaned stream proxy in ZLM (${streamId}). Closing: ${closeUrl}`);
+                                exec(`curl -s "${closeUrl}"`, (closeErr, closeStdout) => {
+                                    if (closeErr) console.error(`[SYNC] Failed to close orphaned stream ${streamId}:`, closeErr);
+                                    else console.log(`[SYNC] ZLM close response for ${streamId}:`, closeStdout);
+                                });
+                            }
+                        });
+                    }
+                } catch (parseErr) {
+                    console.error("Failed to parse ZLM media list response:", parseErr);
+                }
+            }
+        });
+
         // 配置保存后，重启 ai-engine 容器使其生效
         // 由于在容器内执行，我们直接重启指定的容器名
         exec('docker restart buildingos-vision-ai-engine-1', (err) => {
              if (err) console.error("Failed to restart ai-engine container:", err);
         });
-        res.json({ message: 'Config saved successfully and AI Engine restarted.' });
+        res.json({ message: 'Config saved successfully, deleted streams cleared from ZLM, and AI Engine restarted.' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
