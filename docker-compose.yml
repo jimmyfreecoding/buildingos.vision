@@ -13,15 +13,27 @@ services:
       - zlm_www_data:/opt/media/www/  # 使用命名卷，不再需要 chmod 777
     restart: always
 
+  # 前端请求代理网关 (Nginx) - 用于托管 Web 界面并代理 /api
+  web-nginx:
+    image: nginx:alpine
+    ports:
+      - "10082:80"
+    volumes:
+      - web_frontend_data:/usr/share/nginx/html # 挂载前端专用的卷
+      - ./web_manager/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - web-manager-frontend-deploy
+      - web-manager-backend
+    restart: always
+
   # 前端自动构建与部署任务 (执行完即退出)
   web-manager-frontend-deploy:
     build:
       context: ./web_manager/frontend
       dockerfile: Dockerfile
     volumes:
-      - zlm_www_data:/target_www/ # 将编译后的 dist 放入 ZLM 的 www 目录
-    depends_on:
-      - zlm
+      - web_frontend_data:/target_www/ # 将编译后的 dist 放入 Nginx 的专用卷
+    # 注意：这个任务不需要 depends_on zlm 了
 
   # AI 推理引擎 (关键，使用 GPU)
   ai-engine:
@@ -36,8 +48,8 @@ services:
       - "emqx:host-gateway"
     volumes:
       - ./ai_engine/models:/app/models
-      - ai_config_data:/app/config # 使用命名卷存储配置文件
-      - zlm_www_data:/app/www      # 共享给 AI 引擎用于保存截图和视频
+      - ai_config_data:/app/config
+      - zlm_www_data:/app/www # 仍然挂载 zlm_www_data 用于保存截图和视频
     depends_on:
       - zlm
     restart: always
@@ -77,6 +89,7 @@ services:
 # 声明所有的命名卷 (Docker 自动管理权限，物理存储在 /var/lib/docker/volumes/)
 volumes:
   zlm_www_data:
+  web_frontend_data:
   ai_config_data:
   node_red_data:
   portainer_data:
