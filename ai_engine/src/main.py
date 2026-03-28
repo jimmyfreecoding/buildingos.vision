@@ -463,15 +463,25 @@ def get_upper_body_crop(frame, box):
 def capture_frame(stream_url):
     """Captures a single frame from the given RTSP URL."""
     try:
-        # Instead of OpenCV pulling RTSP directly from ZLM, 
-        # let's try to pull via HTTP-FLV or just use basic OpenCV without env overrides
-        # that might be causing "Unable to open RTSP for listening"
-        if "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ:
-            del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+        # Some OpenCV builds on Jetson with FFMPEG backend have issues with http/rtsp streams
+        # Using GSTREAMER backend or simple HTTP requests for images is safer.
         
+        # If it's an HTTP URL (like ZLM getSnap), we can use requests + numpy to decode directly
+        # bypassing OpenCV's VideoCapture entirely which is the source of the "Unable to open RTSP for listening" errors.
+        if stream_url.startswith('http'):
+            import requests
+            import numpy as np
+            resp = requests.get(stream_url, timeout=5)
+            if resp.status_code == 200:
+                image_array = np.asarray(bytearray(resp.content), dtype=np.uint8)
+                frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                return frame
+            return None
+            
         cap = cv2.VideoCapture(stream_url)
-    except Exception:
-        cap = cv2.VideoCapture(stream_url)
+    except Exception as e:
+        print(f"Error capturing frame: {e}")
+        return None
     
     if not cap.isOpened():
         return None
@@ -580,9 +590,7 @@ def process_occupancy_areas():
                     frame = capture_frame(snapshot_url)
                     
                     if frame is None:
-                         print(f"[{cam_id}] Snapshot API failed, falling back to HTTP-FLV")
-                         fallback_flv = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
-                         frame = capture_frame(fallback_flv)
+                         print(f"[{cam_id}] Snapshot API failed, no fallback to avoid OpenCV FFMPEG crash.")
                     
                     if frame is not None:
                         # Add logic to calculate motion score if needed, currently 0
