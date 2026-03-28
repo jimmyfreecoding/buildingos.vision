@@ -65,12 +65,13 @@ def add_stream_proxy(stream_config):
     
     # 提取并处理 url 参数，确保特殊字符（如 @）被正确编码
     source_url = stream_config['source_url']
+    stream_id = stream_config.get('zlm_stream_id', stream_config['id'])
     
     params = {
         'secret': ZLM_SECRET,
         'vhost': '__defaultVhost__',
         'app': 'live',
-        'stream': stream_config.get('zlm_stream_id', stream_config['id']),
+        'stream': stream_id,
         'url': source_url,
         'enable_rtsp': 1,
         'enable_rtmp': 1,
@@ -82,17 +83,17 @@ def add_stream_proxy(stream_config):
         # 对参数进行 urlencode，这会自动将源地址中的 @ 等特殊字符转换为 %40 等
         query_string = urllib.parse.urlencode(params)
         full_url = f"{api_url}?{query_string}"
-        print(f"Registering stream proxy: {stream_config['id']} -> ZLM")
+        print(f"Registering stream proxy: {stream_id} -> ZLM")
         
         req = urllib.request.Request(full_url)
         with urllib.request.urlopen(req, timeout=10) as response:
             resp_data = json.loads(response.read().decode())
             if resp_data.get('code') == 0:
-                print(f"Successfully registered proxy for {stream_config['id']}")
+                print(f"Successfully registered proxy for {stream_id}")
             else:
-                print(f"Failed to register proxy for {stream_config['id']}: {resp_data}")
+                print(f"Failed to register proxy for {stream_id}: {resp_data}")
     except Exception as e:
-        print(f"Error calling ZLM API for {stream_config['id']}: {e}")
+        print(f"Error calling ZLM API for {stream_id}: {e}")
 
 # --- Media Capture Helper ---
 def capture_event_media(cam_id, frame, event_type, results=None, model_type="detect", extra_annotations=None):
@@ -479,6 +480,9 @@ def process_occupancy_areas():
     """Polls all configured areas periodically."""
     print("Starting area polling worker...")
     
+    # Register all streams at startup (including smoking ones if not handled by worker)
+    # Actually, smoking streams are handled by stream_worker, so we just handle occupancy here.
+    
     while True:
         # Load the latest config inside the loop to catch any webadmin changes
         try:
@@ -490,6 +494,17 @@ def process_occupancy_areas():
             
         occupancy_streams = current_config.get('streams', {}).get('occupancy', [])
         
+        # --- NEW DEBUG LOGGING ---
+        print(f"[Occupancy Polling] Reloaded config. Found {len(occupancy_streams)} occupancy streams.")
+        for s in occupancy_streams:
+            print(f"  - Stream ID: {s.get('id')}, Area: {s.get('areaCode')}, Source: {s.get('source_url')}")
+        # -------------------------
+
+        if not occupancy_streams:
+            print("No occupancy streams configured. Waiting...")
+            time.sleep(5)
+            continue
+        
         # Check ZLM stream status periodically
         try:
             zlm_list_url = f"{ZLM_API_URL}/getMediaList?secret={ZLM_SECRET}"
@@ -499,6 +514,9 @@ def process_occupancy_areas():
                 active_streams = []
                 if resp_data.get('code') == 0 and resp_data.get('data'):
                     active_streams = [s['stream'] for s in resp_data['data']]
+                
+                # Debug print
+                print(f"[Occupancy Polling] Found active streams in ZLM: {active_streams}")
                 
                 # Re-register if missing
                 for stream_conf in occupancy_streams:
@@ -523,7 +541,8 @@ def process_occupancy_areas():
             
             for area_code, streams in area_streams.items():
                 if area_code not in area_states:
-                    area_states[area_code] = AreaStateManager(area_code, config)
+                    # Pass the current_config so AreaStateManager gets latest thresholds
+                    area_states[area_code] = AreaStateManager(area_code, current_config)
                 
                 state_machine = area_states[area_code]
                 
