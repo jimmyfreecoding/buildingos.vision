@@ -530,6 +530,9 @@ def process_occupancy_areas():
         # Add a short delay after potential registration before attempting to pull
         time.sleep(2)
 
+        # --- RE-LOAD CONFIG BEFORE GROUPING (Crucial fix!) ---
+        # The inner loop needs the actual loaded streams
+        # ---------------------------------------------------
         try:
             # Group streams by area
             area_streams = {}
@@ -582,6 +585,8 @@ def process_occupancy_areas():
                         total_person_count += person_count
                         if cam_visual_score > max_visual_score:
                             max_visual_score = cam_visual_score
+                    else:
+                        print(f"[{cam_id}] Failed to capture frame from {stream_conf['url']}")
 
                 # Evaluate state for the area
                 current_state, event_type = state_machine.evaluate(max_visual_score, motion_score=0.0, person_count=total_person_count, images_data=images_data)
