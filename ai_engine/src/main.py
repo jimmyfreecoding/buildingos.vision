@@ -182,24 +182,45 @@ class PersonState:
 
 camera_states = {}
 
-# --- Model Initialization ---
+# --- Model Initialization & Auto-Conversion ---
 def get_model(model_name, task):
     base_path = "/app/models" if os.path.exists("/app/models") else "./models"
     engine_path = os.path.join(base_path, f"{model_name}.engine")
     pt_path = os.path.join(base_path, f"{model_name}.pt")
     
+    # Check if TensorRT engine exists
     if os.path.exists(engine_path):
         print(f"Loading TensorRT model: {engine_path}")
         return YOLO(engine_path, task=task)
     
+    # If .pt doesn't exist either, use fallback
     if not os.path.exists(pt_path):
         print(f"Model {pt_path} not found. Using standard YOLOv8n for demo.")
-        if task == 'pose':
-            return YOLO("yolov8n-pose.pt", task='pose')
-        return YOLO("yolov8n.pt", task='detect')
+        fallback_pt = "yolov8n-pose.pt" if task == 'pose' else "yolov8n.pt"
+        pt_path = os.path.join(base_path, fallback_pt)
+        if not os.path.exists(pt_path):
+            return YOLO(fallback_pt, task=task) # Let ultralytics download it
         
     print(f"Loading PyTorch model: {pt_path}")
-    return YOLO(pt_path, task=task)
+    model = YOLO(pt_path, task=task)
+    
+    # AUTO-CONVERSION LOGIC: If we are on Jetson (CUDA available) and no .engine exists
+    import torch
+    if torch.cuda.is_available():
+        print(f"TensorRT engine not found for {model_name}. Starting auto-conversion...")
+        print("This may take 5-10 minutes. Please be patient. Do not kill the process.")
+        try:
+            # Export to TensorRT FP16
+            model.export(format="engine", device=0, half=True, workspace=4)
+            print(f"Auto-conversion successful! Created: {engine_path}")
+            # Reload the newly created engine model
+            return YOLO(engine_path, task=task)
+        except Exception as e:
+            print(f"Auto-conversion failed: {e}. Falling back to PyTorch model.")
+    else:
+        print("CUDA not available. Skipping TensorRT conversion. Running on CPU.")
+
+    return model
 
 print("Initializing Models...")
 # Stage 1: Pose for human detection and ROI proposal
