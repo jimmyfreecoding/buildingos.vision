@@ -1,24 +1,29 @@
-# 使用 NVIDIA 官方针对 JetPack 6 优化的基础镜像
-FROM nvcr.io/nvidia/l4t-pytorch:r36.2.0
+# 使用适用于 JetPack 6.0 (Orin Nano) 的官方 PyTorch 镜像
+# 注意：NVIDIA 官方镜像 tag 必须带上 pth 版本后缀，否则会报 not found
+FROM nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.2-py3
+
+# 环境变量设置
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# 更新系统依赖
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖：包含硬件视频处理库和编译工具
-# 注意：l4t-pytorch 镜像通常基于 Ubuntu
-RUN apt-get update && apt-get install -y \
-    libextstack-dev libgoogle-glog-dev libevent-dev \
-    pkg-config python3-pip ffmpeg libsm6 libxext6 \
-    && rm -rf /var/lib/apt/lists/*
-
-# 安装 Python 依赖
+# 复制依赖文件并安装 Python 包
+# (镜像自带了 PyTorch, torchvision, torchaudio，这里安装其他依赖)
 COPY requirements.txt .
-RUN pip3 install --upgrade pip
-RUN pip3 install -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# 拷贝推理脚本和 TensorRT 模型
-COPY ./src /app/src
-COPY ./models /app/models
+# 复制业务代码
+COPY src/ ./src/
 
-# 启动脚本（开启硬解码支持）
-CMD ["python3", "/app/src/main.py"]
+# 启动命令
+CMD ["python3", "src/main.py"]
