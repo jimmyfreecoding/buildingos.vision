@@ -479,21 +479,28 @@ def process_occupancy_areas():
     """Polls all configured areas periodically."""
     print("Starting area polling worker...")
     
-    # Register all occupancy stream proxies once at startup
     occupancy_streams = config['streams'].get('occupancy', [])
-    for stream_conf in occupancy_streams:
-        if 'source_url' in stream_conf:
-            add_stream_proxy(stream_conf)
-            
-    # Give ZLM a brief moment to proxy streams initially
-    time.sleep(5)
     
     while True:
-        # Re-register proxy periodically in case ZLM restarted or dropped them
-        for stream_conf in occupancy_streams:
-            if 'source_url' in stream_conf:
-                add_stream_proxy(stream_conf)
+        # Check ZLM stream status periodically
+        try:
+            zlm_list_url = f"{ZLM_API_URL}/getMediaList?secret={ZLM_SECRET}"
+            req = urllib.request.Request(zlm_list_url)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                resp_data = json.loads(response.read().decode())
+                active_streams = []
+                if resp_data.get('code') == 0 and resp_data.get('data'):
+                    active_streams = [s['stream'] for s in resp_data['data']]
                 
+                # Re-register if missing
+                for stream_conf in occupancy_streams:
+                    stream_id = stream_conf.get('zlm_stream_id', stream_conf['id'])
+                    if stream_id not in active_streams and 'source_url' in stream_conf:
+                        print(f"[Occupancy] Stream {stream_id} missing in ZLM, re-registering...")
+                        add_stream_proxy(stream_conf)
+        except Exception as e:
+            print(f"Error checking ZLM media list: {e}")
+
         try:
             # Group streams by area
             area_streams = {}
