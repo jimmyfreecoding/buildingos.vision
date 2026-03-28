@@ -48,7 +48,8 @@ services:
       - "emqx:host-gateway"
     volumes:
       - ./ai_engine/models:/app/models
-      - ai_config_data:/app/config
+      # 修复：直接挂载宿主机目录，确保能读到初始的 config.json
+      - ./ai_engine/config:/app/config
       - zlm_www_data:/app/www # 仍然挂载 zlm_www_data 用于保存截图和视频
     depends_on:
       - zlm
@@ -73,7 +74,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # 允许控制重启容器
       - ./:/host_project                            # 允许执行 git pull / compose 操作
-      - ai_config_data:/app/ai_engine/config       # 挂载 AI 命名卷，允许后端读写 config.json
+      # 修复：直接将宿主机的配置文件目录挂载进来，不使用命名卷以避免初始化为空
+      - ./ai_engine/config:/app/ai_engine/config
     restart: always
 
   # Docker 可视化管理 (Portainer)
@@ -90,6 +92,5 @@ services:
 volumes:
   zlm_www_data:
   web_frontend_data:
-  ai_config_data:
   node_red_data:
   portainer_data:
