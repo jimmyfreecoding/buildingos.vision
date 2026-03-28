@@ -67,6 +67,9 @@ def add_stream_proxy(stream_config):
     source_url = stream_config['source_url']
     stream_id = stream_config.get('zlm_stream_id', stream_config['id'])
     
+    # For testing/debug, if source_url has @ but no RTSP port, add one or check formatting
+    # However, urlencode handles most things. We must pass the raw string to urlencode.
+    
     params = {
         'secret': ZLM_SECRET,
         'vhost': '__defaultVhost__',
@@ -76,7 +79,8 @@ def add_stream_proxy(stream_config):
         'enable_rtsp': 1,
         'enable_rtmp': 1,
         'enable_hls': 0,
-        'enable_mp4': 0
+        'enable_mp4': 0,
+        'rtp_type': 0  # 0: tcp, 1: udp, 2: multicast (TCP is more stable for proxy)
     }
     
     try:
@@ -460,6 +464,8 @@ def capture_frame(stream_url):
     """Captures a single frame from the given RTSP URL."""
     try:
         os.environ["OPENCV_VIDEOIO_PRIORITY_LIST"] = "FFMPEG,GSTREAMER,V4L2"
+        # Reduce timeout for OpenCV so it doesn't block forever
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "timeout;2000000|rtsp_transport;tcp"
         cap = cv2.VideoCapture(stream_url, getattr(cv2, 'CAP_FFMPEG', 1900))
     except Exception:
         cap = cv2.VideoCapture(stream_url)
@@ -555,8 +561,16 @@ def process_occupancy_areas():
                 
                 # Fetch and process frames from all cameras in the area
                 for stream_conf in streams:
-                    cam_id = stream_conf['id']
-                    frame = capture_frame(stream_conf['url'])
+                    cam_id = stream_conf.get('id', 'unknown')
+                    stream_url = stream_conf.get('url')
+                    
+                    # If stream is missing in ZLM, don't even try to capture (avoids OpenCV block)
+                    zlm_stream_id = stream_conf.get('zlm_stream_id', cam_id)
+                    if 'active_streams' in locals() and zlm_stream_id not in active_streams:
+                        print(f"[{cam_id}] Skipping capture because stream is not ready in ZLM.")
+                        continue
+                        
+                    frame = capture_frame(stream_url)
                     
                     if frame is not None:
                         # Add logic to calculate motion score if needed, currently 0
