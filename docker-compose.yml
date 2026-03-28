@@ -1,4 +1,4 @@
-name: buildingos.vision
+name: buildingos-vision
 services:
   # 流媒体中转 (ZLMediaKit) - 同时作为前端 Web 服务器
   zlm:
