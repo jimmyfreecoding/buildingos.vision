@@ -103,21 +103,25 @@ app.post('/api/config', (req, res) => {
                         activeStreamIds.forEach(streamId => {
                             if (!newStreamIds.has(streamId)) {
                                 // This stream exists in ZLM but NOT in our new config! Kill it.
-                                // NOTE: For pull streams (addStreamProxy), close_streams might not be enough
-                                // We should use delStreamProxy with the key.
-                                // In ZLM, the key for a proxy is usually <vhost>/<app>/<stream>
-                                const proxyKey = `__defaultVhost__/live/${streamId}`;
-                                const delProxyUrl = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${proxyKey}`;
                                 
-                                console.log(`[SYNC] Found orphaned stream proxy in ZLM (${streamId}). Deleting proxy: ${delProxyUrl}`);
-                                exec(`curl -s "${delProxyUrl}"`, (delErr, delStdout) => {
-                                    if (delErr) console.error(`[SYNC] Failed to delete proxy for ${streamId}:`, delErr);
-                                    else console.log(`[SYNC] ZLM del proxy response for ${streamId}:`, delStdout);
-                                    
-                                    // Also forcefully close any active players/connections for this stream
-                                    const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
-                                    exec(`curl -s "${closeUrl}"`, () => {});
-                                });
+                                // Approach 1: Close all active connections for this stream
+                                const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
+                                console.log(`[SYNC] Closing active connections for orphaned stream ${streamId}`);
+                                exec(`curl -s "${closeUrl}"`, () => {});
+
+                                // Approach 2: Delete proxy by iterating through keys
+                                // The key is what was returned by addStreamProxy. If we don't know it,
+                                // we can use the original URL or standard key format, but ZLM's delStreamProxy 
+                                // is notoriously picky. 
+                                // A safer approach when proxy is stubborn: restart ZLM container if needed,
+                                // but for now, we try standard key formats.
+                                const proxyKey1 = `__defaultVhost__/live/${streamId}`;
+                                const delProxyUrl1 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${proxyKey1}`;
+                                exec(`curl -s "${delProxyUrl1}"`, () => {});
+                                
+                                // Approach 3: Sometimes the key is just the stream ID or a hash.
+                                const delProxyUrl2 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${streamId}`;
+                                exec(`curl -s "${delProxyUrl2}"`, () => {});
                             }
                         });
                     }
