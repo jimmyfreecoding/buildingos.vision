@@ -479,9 +479,9 @@ def process_occupancy_areas():
     """Polls all configured areas periodically."""
     print("Starting area polling worker...")
     
-    occupancy_streams = config['streams'].get('occupancy', [])
-    
     while True:
+        occupancy_streams = config['streams'].get('occupancy', [])
+        
         # Check ZLM stream status periodically
         try:
             zlm_list_url = f"{ZLM_API_URL}/getMediaList?secret={ZLM_SECRET}"
@@ -500,6 +500,9 @@ def process_occupancy_areas():
                         add_stream_proxy(stream_conf)
         except Exception as e:
             print(f"Error checking ZLM media list: {e}")
+
+        # Add a short delay after potential registration before attempting to pull
+        time.sleep(2)
 
         try:
             # Group streams by area
