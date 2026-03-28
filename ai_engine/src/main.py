@@ -71,8 +71,11 @@ def add_stream_proxy(stream_config):
     try:
         query_string = urllib.parse.urlencode(params)
         full_url = f"{api_url}?{query_string}"
-        print(f"Registering stream proxy: {stream_config['id']} -> ZLM")
-        with urllib.request.urlopen(full_url) as response:
+        print(f"Registering stream proxy: {stream_config['id']} -> ZLM (URL: {full_url})")
+        
+        # Add a timeout to prevent hanging, and handle errors gracefully
+        req = urllib.request.Request(full_url)
+        with urllib.request.urlopen(req, timeout=10) as response:
             resp_data = json.loads(response.read().decode())
             if resp_data.get('code') == 0:
                 print(f"Successfully registered proxy for {stream_config['id']}")

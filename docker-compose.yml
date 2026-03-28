@@ -48,8 +48,8 @@ services:
       dockerfile: Dockerfile
     runtime: nvidia
     environment:
-      - MQTT_BROKER=emqx
-      - ZLM_API=http://zlm:80/index/api/
+      # MQTT_BROKER 移除硬编码，优先使用 config.json 中的配置
+      - ZLM_API=http://zlm:80/index/api
       # 让 AI 引擎读取相同的秘钥环境变量
       - ZLM_SECRET=buildingos_edge_secret_2026
     extra_hosts:
