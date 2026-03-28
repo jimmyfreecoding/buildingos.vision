@@ -210,8 +210,8 @@ def get_model(model_name, task):
         print(f"TensorRT engine not found for {model_name}. Starting auto-conversion...")
         print("This may take 5-10 minutes. Please be patient. Do not kill the process.")
         try:
-            # Export to TensorRT FP16
-            model.export(format="engine", device=0, half=True, workspace=4)
+            # 解决 TensorRT 转换时 OOM 或被 kill 的问题，降低 workspace 并禁用 half 强转如果失败
+            model.export(format="engine", device=0, half=True, workspace=2)
             print(f"Auto-conversion successful! Created: {engine_path}")
             # Reload the newly created engine model
             return YOLO(engine_path, task=task)
