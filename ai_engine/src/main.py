@@ -571,19 +571,18 @@ def process_occupancy_areas():
                     
                     # Workaround: Use ZLM's http-flv or snapshot instead of RTSP to avoid OpenCV "Unable to open RTSP for listening" error
                     # Since ZLM is converting to all formats, we can pull the http-flv stream which OpenCV handles better for polling
-                    # ZLM default FLV url format: http://zlm:80/live/stream_id.live.flv
-                    
-                    # Ensure we extract the actual stream ID properly from the URL
-                    zlm_stream_id = stream_conf.get('zlm_stream_id', cam_id)
-                    fallback_url = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
+                    # Actually, for polling, getting a direct snapshot via ZLM's HTTP API is the safest and fastest way!
+                    # ZLM Snapshot API: /index/api/getSnap?secret=xxx&url=rtsp://...
+                    encoded_rtsp = urllib.parse.quote(stream_url)
+                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_rtsp}&timeout_sec=5"
                         
-                    print(f"[{cam_id}] Attempting to capture from FLV: {fallback_url}")
-                    frame = capture_frame(fallback_url)
+                    print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
+                    frame = capture_frame(snapshot_url)
                     
                     if frame is None:
-                         print(f"[{cam_id}] FLV failed, falling back to RTSP: {stream_url}")
-                         # Fallback to RTSP if FLV fails
-                         frame = capture_frame(stream_url)
+                         print(f"[{cam_id}] Snapshot API failed, falling back to HTTP-FLV")
+                         fallback_flv = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
+                         frame = capture_frame(fallback_flv)
                     
                     if frame is not None:
                         # Add logic to calculate motion score if needed, currently 0
