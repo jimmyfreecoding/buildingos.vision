@@ -1,6 +1,6 @@
-# 使用适用于 JetPack 6.0 (Orin Nano) 的官方 PyTorch 镜像
-# 注意：NVIDIA 官方镜像 tag 必须带上 pth 版本后缀，否则会报 not found
-FROM nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.2-py3
+# 使用适用于 JetPack 6.0 (Orin Nano) 的官方机器学习基础镜像
+# NVIDIA 在 JetPack 6.0 中调整了策略，推荐使用 l4t-ml 镜像作为底座
+FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3
 
 # 环境变量设置
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # 复制依赖文件并安装 Python 包
-# (镜像自带了 PyTorch, torchvision, torchaudio，这里安装其他依赖)
+# l4t-ml 镜像已经预装了 PyTorch, torchvision, torchaudio, jupyterlab 等
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
