@@ -14,5 +14,5 @@ FROM alpine:latest
 # 接收构建产物
 COPY --from=builder /app/dist /app/dist
 
-# 当容器启动时，将 dist 目录下的文件复制到挂载的目标卷（Nginx 的 web_frontend_data 卷）
-CMD cp -r /app/dist/* /target_www/ && echo "Frontend deployed successfully to Nginx volume."
+# 当容器启动时，先清空目标卷的旧文件，再将 dist 目录下的文件复制到挂载的目标卷
+CMD rm -rf /target_www/* && cp -r /app/dist/* /target_www/ && echo "Frontend deployed successfully to Nginx volume."

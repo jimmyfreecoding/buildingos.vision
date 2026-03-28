@@ -8,7 +8,7 @@ zlm/www/captures/
 
 # AI Models & Datasets
 
-ai_engine/models/*.engine
+# ai_engine/models/*.engine
 ai_engine/models/dataset/
 ai_engine/models/train/
 
