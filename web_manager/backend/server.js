@@ -93,39 +93,61 @@ app.get('/api/system/info', (req, res) => {
         
         const cpus = os.cpus();
         
-        // Mock GPU for now if nvidia-smi is not available
-        exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (error, stdout, stderr) => {
+        // Jetson Orin Nano doesn't use nvidia-smi, it uses tegrastats.
+        // Reading /sys/devices/gpu.0/load is a common way to get GPU load on Jetson without parsing tegrastats continuously.
+        exec('cat /sys/devices/gpu.0/load', (error, stdout, stderr) => {
             let gpuInfo = { util: 0, memUsed: 0, memTotal: 0 };
+            
             if (!error && stdout) {
-                const parts = stdout.split(',').map(s => s.trim());
-                if (parts.length >= 3) {
-                    gpuInfo = {
-                        util: parseFloat(parts[0]),
-                        memUsed: parseFloat(parts[1]),
-                        memTotal: parseFloat(parts[2])
-                    };
+                // Jetson GPU load is 0-1000, so we divide by 10
+                const load = parseInt(stdout.trim(), 10);
+                if (!isNaN(load)) {
+                    gpuInfo.util = load / 10;
                 }
+                
+                // For unified memory on Jetson, GPU memory is essentially system memory.
+                // We can just mirror system memory for the "GPU" card to avoid confusion, 
+                // or leave it as N/A. Let's just show system memory usage for the unified architecture.
+                gpuInfo.memTotal = Math.round(totalMem / (1024 * 1024));
+                gpuInfo.memUsed = Math.round(usedMem / (1024 * 1024));
+            } else {
+                // Fallback to nvidia-smi if not on Jetson
+                exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (smiErr, smiOut) => {
+                    if (!smiErr && smiOut) {
+                        const parts = smiOut.split(',').map(s => s.trim());
+                        if (parts.length >= 3) {
+                            gpuInfo = {
+                                util: parseFloat(parts[0]),
+                                memUsed: parseFloat(parts[1]),
+                                memTotal: parseFloat(parts[2])
+                            };
+                        }
+                    }
+                });
             }
 
-            res.json({
-                cpu: {
-                    cores: cpus.length,
-                    model: cpus[0].model,
-                    usage: Math.random() * 100 // Mock CPU usage for quick demo, a real impl needs interval measuring
-                },
-                memory: {
-                    total: totalMem,
-                    free: freeMem,
-                    used: usedMem,
-                    usagePercent: memUsage
-                },
-                gpu: gpuInfo,
-                os: {
-                    platform: os.platform(),
-                    release: os.release(),
-                    uptime: os.uptime()
-                }
-            });
+            // Small delay to allow nvidia-smi to complete if it was called
+            setTimeout(() => {
+                res.json({
+                    cpu: {
+                        cores: cpus.length,
+                        model: cpus[0].model,
+                        usage: Math.random() * 100 // Mock CPU usage for quick demo, a real impl needs interval measuring
+                    },
+                    memory: {
+                        total: totalMem,
+                        free: freeMem,
+                        used: usedMem,
+                        usagePercent: memUsage
+                    },
+                    gpu: gpuInfo,
+                    os: {
+                        platform: os.platform(),
+                        release: os.release(),
+                        uptime: os.uptime()
+                    }
+                });
+            }, 100);
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -138,18 +160,26 @@ app.get('/api/zlm/metrics', (req, res) => {
         const zlmSecret = config.zlm?.secret || "buildingos_edge_secret_2026";
         const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
         
-        exec(`curl -s "${getMediaListUrl}"`, (err, stdout) => {
-            if (err) {
-                return res.status(500).json({ error: "Failed to fetch ZLM data" });
-            }
-            try {
-                const zlmResponse = JSON.parse(stdout);
-                res.json(zlmResponse);
-            } catch (e) {
-                res.status(500).json({ error: "Failed to parse ZLM response" });
-            }
+        http.get(getMediaListUrl, (zlmRes) => {
+            let data = '';
+            zlmRes.on('data', (chunk) => {
+                data += chunk;
+            });
+            zlmRes.on('end', () => {
+                try {
+                    const zlmResponse = JSON.parse(data);
+                    res.json(zlmResponse);
+                } catch (e) {
+                    console.error("Parse ZLM response failed:", e, data);
+                    res.status(500).json({ error: "Failed to parse ZLM response" });
+                }
+            });
+        }).on('error', (err) => {
+            console.error("HTTP GET to ZLM failed:", err);
+            res.status(500).json({ error: "Failed to fetch ZLM data" });
         });
     } catch (e) {
+        console.error("ZLM Metrics API Error:", e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -227,12 +257,14 @@ app.post('/api/config', (req, res) => {
         // is NOT in our newConfig, we force close it.
         const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
         
-        exec(`curl -s "${getMediaListUrl}"`, (err, stdout) => {
-            if (err) {
-                console.error(`Failed to fetch media list from ZLM for sync:`, err);
-            } else {
+        http.get(getMediaListUrl, (zlmRes) => {
+            let data = '';
+            zlmRes.on('data', (chunk) => {
+                data += chunk;
+            });
+            zlmRes.on('end', () => {
                 try {
-                    const zlmResponse = JSON.parse(stdout);
+                    const zlmResponse = JSON.parse(data);
                     if (zlmResponse.code === 0 && zlmResponse.data) {
                         // We only care about unique stream IDs (app=live)
                         const activeStreamIds = new Set(zlmResponse.data.map(item => item.stream));
@@ -241,31 +273,36 @@ app.post('/api/config', (req, res) => {
                             if (!newStreamIds.has(streamId)) {
                                 // This stream exists in ZLM but NOT in our new config! Kill it.
                                 
+                                // Helper to execute HTTP GET for cleanup
+                                const sendZlmCleanup = (url, logMsg) => {
+                                    http.get(url, () => {
+                                        if (logMsg) console.log(logMsg);
+                                    }).on('error', (err) => {
+                                        console.error(`Cleanup failed for ${url}:`, err);
+                                    });
+                                };
+
                                 // Approach 1: Close all active connections for this stream
                                 const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
-                                console.log(`[SYNC] Closing active connections for orphaned stream ${streamId}`);
-                                exec(`curl -s "${closeUrl}"`, () => {});
+                                sendZlmCleanup(closeUrl, `[SYNC] Closing active connections for orphaned stream ${streamId}`);
 
                                 // Approach 2: Delete proxy by iterating through keys
-                                // The key is what was returned by addStreamProxy. If we don't know it,
-                                // we can use the original URL or standard key format, but ZLM's delStreamProxy 
-                                // is notoriously picky. 
-                                // A safer approach when proxy is stubborn: restart ZLM container if needed,
-                                // but for now, we try standard key formats.
                                 const proxyKey1 = `__defaultVhost__/live/${streamId}`;
                                 const delProxyUrl1 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${proxyKey1}`;
-                                exec(`curl -s "${delProxyUrl1}"`, () => {});
+                                sendZlmCleanup(delProxyUrl1);
                                 
                                 // Approach 3: Sometimes the key is just the stream ID or a hash.
                                 const delProxyUrl2 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${streamId}`;
-                                exec(`curl -s "${delProxyUrl2}"`, () => {});
+                                sendZlmCleanup(delProxyUrl2);
                             }
                         });
                     }
                 } catch (parseErr) {
                     console.error("Failed to parse ZLM media list response:", parseErr);
                 }
-            }
+            });
+        }).on('error', (err) => {
+            console.error(`Failed to fetch media list from ZLM for sync:`, err);
         });
 
         // 配置保存后，重启 ai-engine 容器使其生效

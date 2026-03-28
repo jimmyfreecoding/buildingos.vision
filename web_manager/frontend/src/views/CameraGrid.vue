@@ -1,7 +1,7 @@
 <template>
   <div class="camera-grid">
     <div v-for="(camera, index) in cameras" :key="camera.name" class="camera-item">
-      <!-- 移除了 title header -->
+      <div class="camera-title">{{ camera.name }}</div>
       <div class="camera-view">
         <div :id="`cam-player-${index}`" class="jessibuca-container"></div>
       </div>
@@ -134,19 +134,38 @@ export default {
 <style scoped>
 .camera-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  grid-template-rows: repeat(4, 1fr); /* 改为 4 行，每行一个视频 */
+  /* 调整为 4 宫格布局：两列，行数自动 */
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: minmax(200px, 1fr); /* 保证最小高度，避免太扁 */
   gap: 10px;
   height: 100%;
+  overflow-y: auto; /* 流多的时候允许滚动 */
+  padding-right: 5px;
 }
 
 .camera-item {
-  background: black; /* 改为黑色背景更适合视频 */
+  background: #000;
   border: 1px solid #333;
   border-radius: 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
+  /* 保持 16:9 的视频比例 */
+  aspect-ratio: 16 / 9;
+}
+
+.camera-title {
+  position: absolute;
+  top: 5px;
+  left: 10px;
+  color: white;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 10;
+  pointer-events: none;
 }
 
 .camera-view {
@@ -162,5 +181,17 @@ export default {
   position: absolute;
   top: 0;
   left: 0;
+}
+
+/* 自定义滚动条样式 */
+.camera-grid::-webkit-scrollbar {
+  width: 6px;
+}
+.camera-grid::-webkit-scrollbar-thumb {
+  background-color: #909399;
+  border-radius: 3px;
+}
+.camera-grid::-webkit-scrollbar-track {
+  background-color: #f0f2f5;
 }
 </style>
