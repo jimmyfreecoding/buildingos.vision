@@ -27,8 +27,9 @@
         <!-- 人员感知流 -->
         <el-tab-pane label="人员感知 (Occupancy)" name="occupancy">
           <el-table :data="streams.occupancy" style="width: 100%; margin-bottom: 20px;" border>
-            <el-table-column prop="id" label="设备 ID" width="150" />
-            <el-table-column prop="name" label="位置名称" width="200" />
+            <el-table-column prop="id" label="设备 ID" width="120" />
+            <el-table-column prop="name" label="位置名称" width="150" />
+            <el-table-column prop="areaCode" label="所属区域 (areaCode)" width="200" />
             <el-table-column prop="source_url" label="RTSP 源地址" />
             <el-table-column label="操作" width="120">
               <template #default="scope">
@@ -43,12 +44,15 @@
 
     <!-- 添加弹窗 -->
     <el-dialog v-model="dialogVisible" title="添加视频流">
-      <el-form :model="newStream" label-width="120px">
+      <el-form :model="newStream" label-width="150px">
         <el-form-item label="设备 ID">
           <el-input v-model="newStream.id" placeholder="如: cam_01 (需唯一)"></el-input>
         </el-form-item>
         <el-form-item label="位置名称">
           <el-input v-model="newStream.name" placeholder="如: 1楼大厅"></el-input>
+        </el-form-item>
+        <el-form-item label="所属区域 (areaCode)" v-if="currentTarget === 'occupancy'">
+          <el-input v-model="newStream.areaCode" placeholder="如: Floor01/AreaA/Office01"></el-input>
         </el-form-item>
         <el-form-item label="RTSP 源地址">
           <el-input v-model="newStream.source_url" placeholder="rtsp://admin:pwd@ip:554/..."></el-input>
@@ -74,7 +78,7 @@ const streams = ref({ smoking: [], occupancy: [] })
 
 const dialogVisible = ref(false)
 const currentTarget = ref('')
-const newStream = ref({ id: '', name: '', source_url: '' })
+const newStream = ref({ id: '', name: '', source_url: '', areaCode: '' })
 
 const fetchConfig = async () => {
   loading.value = true
@@ -92,13 +96,16 @@ const fetchConfig = async () => {
 
 const addStream = (type) => {
   currentTarget.value = type
-  newStream.value = { id: '', name: '', source_url: '' }
+  newStream.value = { id: '', name: '', source_url: '', areaCode: '' }
   dialogVisible.value = true
 }
 
 const confirmAdd = () => {
   if (!newStream.value.id || !newStream.value.source_url) {
     return ElMessage.warning('ID 和 源地址必填')
+  }
+  if (currentTarget.value === 'occupancy' && !newStream.value.areaCode) {
+    return ElMessage.warning('人员感知流必须填写所属区域 (areaCode)')
   }
   // 自动补全 ZLM 代理相关的字段
   const streamData = {

@@ -10,7 +10,8 @@ import json
 import urllib.request
 import urllib.parse
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
+import shutil
 
 # --- Load Configuration ---
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/app/config/config.json")
@@ -41,11 +42,16 @@ ZLM_API_URL = os.getenv("ZLM_API", config.get('zlm', {}).get('api_url', "http://
 ZLM_SECRET = os.getenv("ZLM_SECRET", config.get('zlm', {}).get('secret', ""))
 
 MEDIA_STORAGE_PATH = config.get('media', {}).get('storage_path', "/app/www/captures")
-MEDIA_BASE_URL = config.get('media', {}).get('base_url', "http://localhost:10080/captures")
+MEDIA_BASE_URL = config.get('media', {}).get('base_url', "http://localhost:10081/captures")
 VIDEO_DURATION = config.get('media', {}).get('video_duration', 5)
 
-# Ensure media directory exists
+# Occupancy log storage
+OCCUPANCY_LOG_DIR = config.get('storage_quota', {}).get('occupancy_log_dir', "/app/www/occupancy_logs")
+MAX_STORAGE_MB = config.get('storage_quota', {}).get('max_size_mb', 1024)
+
+# Ensure directories exist
 os.makedirs(MEDIA_STORAGE_PATH, exist_ok=True)
+os.makedirs(OCCUPANCY_LOG_DIR, exist_ok=True)
 
 # --- Global State for Cooldowns ---
 last_alert_times = {}
@@ -158,37 +164,175 @@ def record_clip(stream_url, output_path, duration):
     except Exception as e:
         print(f"Error recording clip: {e}")
 
+# --- Storage Cleanup Thread ---
+def cleanup_storage_worker():
+    while True:
+        try:
+            total_size = 0
+            # Calculate total size
+            for dirpath, _, filenames in os.walk(OCCUPANCY_LOG_DIR):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    if not os.path.islink(fp):
+                        total_size += os.path.getsize(fp)
+            
+            total_size_mb = total_size / (1024 * 1024)
+            if total_size_mb > MAX_STORAGE_MB:
+                print(f"[Storage] Usage {total_size_mb:.2f}MB exceeds limit {MAX_STORAGE_MB}MB. Cleaning up...")
+                
+                # Get all date directories sorted by name (oldest first)
+                date_dirs = [d for d in os.listdir(OCCUPANCY_LOG_DIR) if os.path.isdir(os.path.join(OCCUPANCY_LOG_DIR, d))]
+                date_dirs.sort()
+                
+                # Remove oldest date directories until under 80% of max
+                target_size = MAX_STORAGE_MB * 0.8
+                for date_dir in date_dirs:
+                    if total_size_mb <= target_size:
+                        break
+                    
+                    dir_to_remove = os.path.join(OCCUPANCY_LOG_DIR, date_dir)
+                    print(f"[Storage] Removing old directory: {dir_to_remove}")
+                    
+                    # Calculate size of this directory before removing
+                    dir_size = 0
+                    for dirpath, _, filenames in os.walk(dir_to_remove):
+                        for f in filenames:
+                            fp = os.path.join(dirpath, f)
+                            if not os.path.islink(fp):
+                                dir_size += os.path.getsize(fp)
+                    
+                    try:
+                        shutil.rmtree(dir_to_remove)
+                        total_size_mb -= (dir_size / (1024 * 1024))
+                    except Exception as e:
+                        print(f"[Storage] Error removing {dir_to_remove}: {e}")
+                        
+        except Exception as e:
+            print(f"[Storage Worker Error] {e}")
+            
+        # Run cleanup every hour
+        time.sleep(3600)
+
+# Start storage cleanup thread
+threading.Thread(target=cleanup_storage_worker, daemon=True).start()
+
 # --- State Machine & Tracking Classes ---
-class PersonState:
-    def __init__(self, patience_seconds=120):
+class AreaStateManager:
+    def __init__(self, area_code, config):
+        self.area_code = area_code
+        self.config = config
+        self.last_occupied_time = 0
         self.state = "VACANT"
-        self.last_seen_time = 0
-        self.patience_seconds = patience_seconds
-        self.history_scores = deque(maxlen=10)
-        self.last_alert_state = "VACANT" 
+        self.level2_triggered = False
+        self.level3_triggered = False
+        
+        # Parse thresholds from config
+        area_conf = self._get_area_config()
+        self.score_threshold = area_conf.get('score_threshold', 0.6)
+        self.buffer_minutes = area_conf.get('buffer_minutes', 2)
+        self.level2_minutes = area_conf.get('level2_minutes', 5)
+        self.level3_minutes = area_conf.get('level3_minutes', 10)
 
-    def update(self, has_visual_detection, visual_score, motion_score=0):
+    def _get_area_config(self):
+        areas = self.config.get('areas', [])
+        for area in areas:
+            if area.get('areaCode') == self.area_code:
+                return area
+        # Default fallback
+        return {
+            'score_threshold': 0.6,
+            'buffer_minutes': 2,
+            'level2_minutes': 5,
+            'level3_minutes': 10
+        }
+
+    def evaluate(self, visual_score, motion_score, person_count, images_data):
         current_time = time.time()
-        total_score = (visual_score * 0.7) + (motion_score * 0.3)
-        self.history_scores.append(total_score)
-        avg_score = sum(self.history_scores) / len(self.history_scores)
-
-        if has_visual_detection:
+        now = datetime.now()
+        
+        # Time bias (0.2 during 9:00-18:00, else 0)
+        time_bias = 0.2 if 9 <= now.hour < 18 else 0.0
+        
+        total_score = (visual_score * 0.6) + (motion_score * 0.2) + (time_bias * 0.2)
+        
+        event_type = None
+        is_occupied = False
+        
+        if total_score > self.score_threshold:
+            self.last_occupied_time = current_time
             self.state = "ACTIVE"
-            self.last_seen_time = current_time
+            self.level2_triggered = False
+            self.level3_triggered = False
+            is_occupied = True
+            event_type = "LEVEL_1_DECISION"
         else:
-            time_since_last_seen = current_time - self.last_seen_time
+            time_since_last_seen = (current_time - self.last_occupied_time) / 60.0 # in minutes
+            
             if self.state == "ACTIVE":
-                if time_since_last_seen < self.patience_seconds:
+                if time_since_last_seen < self.buffer_minutes:
                     self.state = "POTENTIAL"
+                    is_occupied = True
                 else:
                     self.state = "VACANT"
-            elif self.state == "POTENTIAL":
-                if time_since_last_seen > self.patience_seconds:
-                    self.state = "VACANT"
-        return self.state, avg_score
+            
+            if self.state == "VACANT":
+                if time_since_last_seen > self.level3_minutes and not self.level3_triggered:
+                    self.level3_triggered = True
+                    event_type = "LEVEL_3_TRIGGER"
+                elif time_since_last_seen > self.level2_minutes and not self.level2_triggered:
+                    self.level2_triggered = True
+                    event_type = "LEVEL_2_TRIGGER"
 
-camera_states = {}
+        # Log process data if an event occurred
+        if event_type:
+            self._log_process_data(event_type, visual_score, motion_score, time_bias, total_score, is_occupied, person_count, images_data)
+            
+        return self.state, event_type
+
+    def _log_process_data(self, event_type, visual_score, motion_score, time_bias, total_score, is_occupied, person_count, images_data):
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H_%M_%S")
+        
+        # Create directory structure
+        safe_area_code = self.area_code.replace('/', '_')
+        log_dir = os.path.join(OCCUPANCY_LOG_DIR, date_str, safe_area_code)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        saved_images = []
+        for cam_id, img_frame in images_data.items():
+            img_filename = f"{time_str}_{cam_id}.jpg"
+            img_path = os.path.join(log_dir, img_filename)
+            cv2.imwrite(img_path, img_frame)
+            # Store relative path for JSON
+            saved_images.append(f"occupancy_logs/{date_str}/{safe_area_code}/{img_filename}")
+            
+        log_data = {
+            "timestamp": now.isoformat(),
+            "areaCode": self.area_code,
+            "event": event_type,
+            "scores": {
+                "visual": visual_score,
+                "motion": motion_score,
+                "time_bias": time_bias,
+                "total": total_score
+            },
+            "threshold_used": self.score_threshold,
+            "is_occupied": is_occupied,
+            "person_count": person_count,
+            "images": saved_images
+        }
+        
+        json_filename = f"{time_str}_{event_type}.json"
+        json_path = os.path.join(log_dir, json_filename)
+        
+        try:
+            with open(json_path, 'w') as f:
+                json.dump(log_data, f, indent=4)
+        except Exception as e:
+            print(f"[{self.area_code}] Error saving log data: {e}")
+
+area_states = {}
 
 # --- Model Initialization & Auto-Conversion ---
 def get_model(model_name, task):
@@ -307,6 +451,119 @@ def get_upper_body_crop(frame, box):
     
     return frame[cy1:cy2, cx1:cx2], (cx1, cy1, cx2, cy2)
 
+def capture_frame(stream_url):
+    """Captures a single frame from the given RTSP URL."""
+    try:
+        os.environ["OPENCV_VIDEOIO_PRIORITY_LIST"] = "FFMPEG,GSTREAMER,V4L2"
+        cap = cv2.VideoCapture(stream_url, getattr(cv2, 'CAP_FFMPEG', 1900))
+    except Exception:
+        cap = cv2.VideoCapture(stream_url)
+    
+    if not cap.isOpened():
+        return None
+    
+    # Read a few frames to clear buffer and get a fresh one
+    for _ in range(3):
+        ret, frame = cap.read()
+    
+    cap.release()
+    if ret:
+        return frame
+    return None
+
+def process_occupancy_areas():
+    """Polls all configured areas periodically."""
+    print("Starting area polling worker...")
+    while True:
+        try:
+            # Group streams by area
+            area_streams = {}
+            for stream in config['streams'].get('occupancy', []):
+                area_code = stream.get('areaCode', 'unknown_area')
+                if area_code not in area_streams:
+                    area_streams[area_code] = []
+                area_streams[area_code].append(stream)
+            
+            for area_code, streams in area_streams.items():
+                if area_code not in area_states:
+                    area_states[area_code] = AreaStateManager(area_code, config)
+                
+                state_machine = area_states[area_code]
+                
+                max_visual_score = 0.0
+                total_person_count = 0
+                images_data = {}
+                
+                # Fetch and process frames from all cameras in the area
+                for stream_conf in streams:
+                    cam_id = stream_conf['id']
+                    frame = capture_frame(stream_conf['url'])
+                    
+                    if frame is not None:
+                        # Add logic to calculate motion score if needed, currently 0
+                        motion_score = 0.0 
+                        
+                        # Process with pose model
+                        results = pose_model(frame, conf=OCCUPANCY_CONF, verbose=False)
+                        
+                        annotated_frame = frame.copy()
+                        person_count = 0
+                        cam_visual_score = 0.0
+                        
+                        for res in results:
+                            if res.boxes:
+                                person_count += len(res.boxes)
+                                if len(res.boxes) > 0 and res.boxes.conf is not None:
+                                    cam_visual_score = float(res.boxes.conf.max().cpu().numpy())
+                                
+                                # Draw red boxes around detected persons
+                                for box in res.boxes.xyxy:
+                                    x1, y1, x2, y2 = map(int, box.cpu().numpy())
+                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                                    cv2.putText(annotated_frame, 'Person', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                        
+                        images_data[cam_id] = annotated_frame
+                        total_person_count += person_count
+                        if cam_visual_score > max_visual_score:
+                            max_visual_score = cam_visual_score
+
+                # Evaluate state for the area
+                current_state, event_type = state_machine.evaluate(max_visual_score, motion_score=0.0, person_count=total_person_count, images_data=images_data)
+                
+                # Handle MQTT Publishing based on event type
+                if event_type:
+                    topic = f"ai/event/occupancy/{area_code.replace('/', '_')}"
+                    payload = {
+                        "areaCode": area_code,
+                        "event": event_type,
+                        "timestamp": datetime.now().isoformat(),
+                        "state": current_state
+                    }
+                    
+                    if event_type == "LEVEL_1_DECISION":
+                        payload["action"] = "keep_on"
+                        payload["person_count"] = total_person_count
+                    elif event_type == "LEVEL_2_TRIGGER":
+                        payload["action"] = "dim"
+                        payload["level"] = 2
+                    elif event_type == "LEVEL_3_TRIGGER":
+                        payload["action"] = "off"
+                        payload["level"] = 3
+                        
+                    mqtt_client.publish(topic, json.dumps(payload))
+                    print(f"[{area_code}] Published Event: {event_type} -> Action: {payload.get('action')}")
+                
+                # Send periodic status update
+                is_occupied = "1" if current_state in ["ACTIVE", "POTENTIAL"] else "0"
+                status_topic = f"ai/status/occupancy/{area_code.replace('/', '_')}"
+                mqtt_client.publish(status_topic, is_occupied)
+                
+        except Exception as e:
+            print(f"Error in process_occupancy_areas: {e}")
+            
+        # Poll every 5 seconds
+        time.sleep(5)
+
 def process_smoking(cam_id, frame):
     # Stage 1: Pose Detection
     results = pose_model.track(frame, persist=True, conf=SMOKING_CONF, verbose=False)
@@ -386,63 +643,8 @@ def process_smoking(cam_id, frame):
             print(f"[{cam_id}] Smoking Event Published (Cascade Confirmed)")
             last_alert_times[alert_key] = current_time
 
-def process_occupancy(cam_id, frame, fps_counter=0):
-    if cam_id not in camera_states:
-        camera_states[cam_id] = PersonState(patience_seconds=STATE_PATIENCE)
-    state_machine = camera_states[cam_id]
-    results = pose_model.track(frame, persist=True, conf=OCCUPANCY_CONF, verbose=False)
-    has_visual = False
-    visual_score = 0.0
-    current_results = []
-    extra_annotations = []
-
-    for res in results:
-        if res.boxes and res.boxes.id is not None:
-            if res.keypoints and len(res.keypoints.data) > 0:
-                has_visual = True
-                visual_score = float(res.boxes.conf.mean().cpu().numpy()) if res.boxes.conf is not None else 0.8
-                current_results.append(res)
-                for box in res.boxes.xyxy:
-                     x1, y1, x2, y2 = box.cpu().numpy()
-                     extra_annotations.append({
-                        'box': [x1, y1, x2, y2],
-                        'label': 'Person',
-                        'color': (255, 0, 0)
-                    })
-                break
-    
-    prev_state = state_machine.state
-    current_state, avg_score = state_machine.update(has_visual, visual_score)
-    
-    if current_state == "ACTIVE" and state_machine.last_alert_state != "ACTIVE":
-        current_time = time.time()
-        alert_key = f"{cam_id}_occupancy"
-        last_alert = last_alert_times.get(alert_key, 0)
-        
-        if current_time - last_alert > ALERT_COOLDOWN:
-            for ann in extra_annotations: ann['color'] = (0, 0, 255)
-            img_url, video_url = capture_event_media(cam_id, frame, "occupancy", results=current_results, model_type="pose", extra_annotations=extra_annotations)
-            topic = f"ai/alarm/occupancy/{cam_id}"
-            payload = {
-                "event": "PERSON_DETECTED",
-                "camera": cam_id,
-                "timestamp": datetime.now().isoformat(),
-                "image_url": img_url,
-                "video_url": video_url
-            }
-            mqtt_client.publish(topic, json.dumps(payload))
-            print(f"[{cam_id}] Occupancy Event Published with Media")
-            last_alert_times[alert_key] = current_time
-            
-    state_machine.last_alert_state = current_state
-    
-    # Send status update every time to prevent "stuck" states, or at least log debug info
-    is_occupied = "1" if current_state in ["ACTIVE", "POTENTIAL"] else "0"
-    topic = f"ai/status/occupancy/{cam_id}"
-    mqtt_client.publish(topic, is_occupied)
-    # Debug print to trace state changes
-    if fps_counter % 200 == 0: # Print occasionally
-         print(f"[{cam_id}] Occupancy State: {current_state} (Score: {avg_score:.2f}) -> MQTT: {is_occupied}")
+# Remove process_occupancy
+# def process_occupancy(cam_id, frame, fps_counter=0):
 
 def stream_worker(stream_config, task_type):
     url = stream_config['url']
@@ -484,9 +686,7 @@ def stream_worker(stream_config, task_type):
             fps_counter += 1
             if task_type == "smoking" and fps_counter % 12 == 0:
                 process_smoking(cam_id, frame)
-            elif task_type == "occupancy":
-                if fps_counter % 15 == 0:
-                     process_occupancy(cam_id, frame, fps_counter)
+            # Removed occupancy processing from continuous stream loop
             
             if fps_counter > 10000: 
                 fps_counter = 0
@@ -496,13 +696,24 @@ def stream_worker(stream_config, task_type):
 
 if __name__ == "__main__":
     threads = []
+    
+    # Start polling thread for occupancy areas
+    if 'occupancy' in config['streams'] and len(config['streams']['occupancy']) > 0:
+        occupancy_thread = threading.Thread(target=process_occupancy_areas)
+        occupancy_thread.daemon = True
+        occupancy_thread.start()
+        threads.append(occupancy_thread)
+
     for task_type, stream_list in config['streams'].items():
+        if task_type == 'occupancy':
+            continue # Occupancy is now handled by the polling thread
+
         for stream_conf in stream_list:
             t = threading.Thread(target=stream_worker, args=(stream_conf, task_type))
             t.daemon = True
             t.start()
             threads.append(t)
-    print(f"Started {len(threads)} stream processing threads.")
+    print(f"Started {len(threads)} background threads.")
     try:
         while True:
             time.sleep(1)

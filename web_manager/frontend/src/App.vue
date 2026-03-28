@@ -27,6 +27,10 @@
           <el-icon><Setting /></el-icon>
           <span>AI 算法参数</span>
         </el-menu-item>
+        <el-menu-item index="/occupancy-logs">
+          <el-icon><Document /></el-icon>
+          <span>人存在算法观测</span>
+        </el-menu-item>
         <el-menu-item index="/network">
           <el-icon><Connection /></el-icon>
           <span>网络设置</span>
@@ -52,7 +56,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { VideoCamera, Setting, Connection, SwitchButton, Monitor, DataLine } from '@element-plus/icons-vue'
+import { VideoCamera, Setting, Connection, SwitchButton, Monitor, DataLine, Document } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 

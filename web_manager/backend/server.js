@@ -368,6 +368,51 @@ app.post('/api/network', (req, res) => {
     res.json({ message: 'Network settings applied. Please reboot for changes to take full effect.' });
 });
 
+// --- 5. Occupancy Logs API ---
+app.get('/api/occupancy/logs', (req, res) => {
+    const logsDir = '/app/www/occupancy_logs';
+    try {
+        if (!fs.existsSync(logsDir)) {
+            return res.json([]);
+        }
+
+        let results = [];
+        const dates = fs.readdirSync(logsDir).filter(f => fs.statSync(path.join(logsDir, f)).isDirectory());
+        
+        dates.forEach(date => {
+            const dateDir = path.join(logsDir, date);
+            const areas = fs.readdirSync(dateDir).filter(f => fs.statSync(path.join(dateDir, f)).isDirectory());
+            
+            areas.forEach(area => {
+                const areaDir = path.join(dateDir, area);
+                const files = fs.readdirSync(areaDir);
+                
+                // Only look for JSON files
+                const jsonFiles = files.filter(f => f.endsWith('.json'));
+                jsonFiles.forEach(jf => {
+                    try {
+                        const content = fs.readFileSync(path.join(areaDir, jf), 'utf8');
+                        const data = JSON.parse(content);
+                        // Add some helper fields
+                        data.date = date;
+                        data.id = `${date}_${area}_${jf}`;
+                        results.push(data);
+                    } catch (e) {
+                        console.error(`Error reading json log ${jf}:`, e);
+                    }
+                });
+            });
+        });
+        
+        // Sort by timestamp descending
+        results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        res.json(results);
+    } catch (e) {
+        console.error("Occupancy Logs API Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Backend server running on http://localhost:${PORT}`);

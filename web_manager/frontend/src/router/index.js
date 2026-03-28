@@ -22,6 +22,10 @@ const routes = [
     component: () => import('../views/AIParams.vue')
   },
   {
+    path: '/occupancy-logs',
+    component: () => import('../views/OccupancyLogs.vue')
+  },
+  {
     path: '/network',
     component: () => import('../views/Network.vue')
   }

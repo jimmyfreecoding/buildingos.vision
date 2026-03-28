@@ -13,6 +13,19 @@
         "base_url": "http://localhost:10081/captures",
         "video_duration": 5
     },
+    "storage_quota": {
+        "occupancy_log_dir": "/app/www/occupancy_logs",
+        "max_size_mb": 1024
+    },
+    "areas": [
+        {
+            "areaCode": "Floor01/AreaA/Office01",
+            "score_threshold": 0.6,
+            "buffer_minutes": 2,
+            "level2_minutes": 5,
+            "level3_minutes": 10
+        }
+    ],
     "streams": {
         "smoking": [
             {
@@ -26,6 +39,7 @@
         "occupancy": [
             {
                 "id": "office_1a",
+                "areaCode": "Floor01/AreaA/Office01",
                 "name": "Office Area 1A",
                 "source_url": "rtsp://admin:Dvdv1205@10.0.0.119:554/cam/realmonitor?channel=1&subtype=1",
                 "zlm_stream_id": "office_1a",
