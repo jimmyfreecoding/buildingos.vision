@@ -47,7 +47,8 @@ const createPlayer = (containerId, streamName) => {
     isNotMute: false,             // 确保静音
     timeout: 10,                  // 设置超时时间(秒)
     heartTimeout: 10,             // 心跳超时
-    supportDblclickFullscreen: true // 双击全屏
+    supportDblclickFullscreen: true, // 双击全屏
+    wcsUseVideoRender: true       // 尝试使用 WebCodecs 渲染减轻 WebGL 压力
   })
 
   // 拼接 ZLM 后端转换好的 FLV 播放地址 
@@ -110,7 +111,10 @@ onMounted(() => {
     props.cameras.forEach((camera, index) => {
       // 使用传入的 camera.name 作为 streamName
       const streamName = camera.name
-      players.value[index] = createPlayer(`cam-player-${index}`, streamName)
+      // 错峰初始化播放器，防止瞬间拉起太多 WebGL 上下文导致浏览器崩溃或卡死
+      setTimeout(() => {
+        players.value[index] = createPlayer(`cam-player-${index}`, streamName)
+      }, index * 300) // 每个播放器延迟 300ms 启动
     })
   }, 500)
 })
