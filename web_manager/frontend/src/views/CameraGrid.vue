@@ -50,8 +50,11 @@ const createPlayer = (containerId, streamName) => {
     supportDblclickFullscreen: true // 双击全屏
   })
 
-  // 拼接 ZLM 后端转换好的 FLV 播放地址 (使用 10081 端口，映射到 zlm 8080)
-  const flvUrl = `http://${ZLM_SERVER_IP}:10081/live/${streamName}.live.flv`
+  // 拼接 ZLM 后端转换好的 FLV 播放地址 
+  // 【重要修复】为了突破浏览器对同一域名 HTTP/1.1 最大 6 个并发连接的限制，
+  // 我们将 HTTP-FLV 替换为 WS-FLV (WebSocket)，因为 WebSocket 连接数限制要宽容得多。
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const flvUrl = `${wsProtocol}//${ZLM_SERVER_IP}:10081/live/${streamName}.live.flv`
   
   // 监听错误事件进行自动重连
   player.on('error', (error) => {
