@@ -219,6 +219,42 @@ app.post('/api/system/update', (req, res) => {
 });
 
 // --- 3. 业务配置 (AI Engine Config) API ---
+app.get('/api/ai/status', (req, res) => {
+    try {
+        const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : { streams: { smoking: [], occupancy: [] } };
+        
+        // 我们通过检查 docker logs 中最后几百行来判断某个线程是否成功启动并输出过日志
+        // 或者简单点，如果有配置，且 AI 引擎容器正在运行，我们假定它们在 Running，否则在 Waiting/Error
+        exec('docker ps --filter "name=buildingos-vision-ai-engine-1" --format "{{.Status}}"', (err, stdout) => {
+            const isAiEngineUp = stdout && stdout.includes('Up');
+            
+            let tasks = [];
+            if (config.streams) {
+                if (config.streams.smoking) {
+                    config.streams.smoking.forEach(s => {
+                        tasks.push({
+                            camId: s.id,
+                            taskType: 'smoking',
+                            status: isAiEngineUp ? 'Running' : 'Offline'
+                        });
+                    });
+                }
+                if (config.streams.occupancy) {
+                    config.streams.occupancy.forEach(s => {
+                        tasks.push({
+                            camId: s.id,
+                            taskType: 'occupancy',
+                            status: isAiEngineUp ? 'Running' : 'Offline'
+                        });
+                    });
+                }
+            }
+            res.json(tasks);
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 app.get('/api/config', (req, res) => {
     try {
         if (!fs.existsSync(CONFIG_PATH)) {

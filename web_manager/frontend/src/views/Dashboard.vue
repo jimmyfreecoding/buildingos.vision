@@ -51,16 +51,14 @@
 
       <!-- ZLM Media Server Status Card -->
       <el-col :span="12">
-        <el-card class="box-card zlm-card">
+        <el-card class="box-card zlm-card" style="margin-bottom: 20px;">
           <template #header>
             <div class="card-header">
               <span><el-icon><VideoCamera /></el-icon> 流媒体引擎状态 (ZLMediaKit)</span>
-              <el-button type="primary" link @click="fetchZlmMetrics">
-                <el-icon><RefreshRight /></el-icon> 刷新
-              </el-button>
+              <el-tag size="small" type="info">每秒刷新</el-tag>
             </div>
           </template>
-          <div v-loading="loadingZlm" class="zlm-content">
+          <div class="zlm-content">
             <el-row :gutter="20" style="margin-bottom: 20px;">
               <el-col :span="8">
                 <el-statistic title="活跃流总数" :value="uniqueStreams.length" />
@@ -73,7 +71,7 @@
               </el-col>
             </el-row>
 
-            <el-table :data="uniqueStreamsData" height="250" style="width: 100%" size="small" border>
+            <el-table :data="uniqueStreamsData" height="150" style="width: 100%" size="small" border>
               <el-table-column prop="stream" label="流 ID (Stream)" width="120" />
               <el-table-column label="可用协议 (Schemas)">
                 <template #default="scope">
@@ -96,6 +94,38 @@
             </el-table>
           </div>
         </el-card>
+
+        <!-- AI Engine Status Card -->
+        <el-card class="box-card ai-card">
+          <template #header>
+            <div class="card-header">
+              <span><el-icon><Cpu /></el-icon> AI 算法引擎任务状态</span>
+            </div>
+          </template>
+          <div class="ai-content">
+             <el-table :data="aiTasks" height="150" style="width: 100%" size="small" border>
+              <el-table-column prop="camId" label="摄像头 ID" width="100" />
+              <el-table-column prop="taskType" label="算法类型" width="120">
+                 <template #default="scope">
+                    <el-tag size="small" :type="scope.row.taskType === 'smoking' ? 'danger' : 'primary'">
+                      {{ scope.row.taskType === 'smoking' ? '吸烟检测' : '人员感知' }}
+                    </el-tag>
+                 </template>
+              </el-table-column>
+              <el-table-column prop="status" label="运行状态">
+                 <template #default="scope">
+                    <el-tag size="small" :type="scope.row.status === 'Running' ? 'success' : 'warning'">
+                      <span style="display: flex; align-items: center; gap: 5px;">
+                        <span v-if="scope.row.status === 'Running'" class="status-dot green"></span>
+                        <span v-else class="status-dot yellow"></span>
+                        {{ scope.row.status }}
+                      </span>
+                    </el-tag>
+                 </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-card>
       </el-col>
     </el-row>
   </div>
@@ -104,11 +134,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import axios from 'axios'
-import { Monitor, VideoCamera, RefreshRight } from '@element-plus/icons-vue'
+import { Monitor, VideoCamera, Cpu } from '@element-plus/icons-vue'
 
 const loadingSys = ref(false)
-const loadingZlm = ref(false)
 let refreshInterval = null
+let zlmInterval = null
 
 // Sys Info State
 const sysInfo = ref({
@@ -120,6 +150,9 @@ const sysInfo = ref({
 
 // ZLM State
 const zlmData = ref([])
+
+// AI Tasks State
+const aiTasks = ref([])
 
 const customColors = [
   { color: '#5cb87a', percentage: 60 },
@@ -153,7 +186,6 @@ const totalBandwidth = computed(() => {
   if (pulls.length > 0) {
       return pulls.reduce((sum, item) => sum + (item.bytesSpeed || 0), 0)
   }
-  // Fallback if no specific pull rtsp is found, just sum all (might be inaccurate)
   return zlmData.value.reduce((sum, item) => sum + (item.bytesSpeed || 0), 0) / zlmData.value.length || 0; 
 })
 
@@ -187,12 +219,11 @@ const fetchSysInfo = async () => {
     const res = await axios.get('/api/system/info')
     sysInfo.value = res.data
   } catch (e) {
-    console.error('Failed to fetch system info')
+    // console.error('Failed to fetch system info')
   }
 }
 
 const fetchZlmMetrics = async () => {
-  loadingZlm.value = true
   try {
     const res = await axios.get('/api/zlm/metrics')
     if (res.data.code === 0 && res.data.data) {
@@ -201,27 +232,40 @@ const fetchZlmMetrics = async () => {
       zlmData.value = []
     }
   } catch (e) {
-    console.error('Failed to fetch ZLM metrics')
+    // console.error('Failed to fetch ZLM metrics')
   }
-  loadingZlm.value = false
+}
+
+const fetchAiTasks = async () => {
+  try {
+    const res = await axios.get('/api/ai/status')
+    aiTasks.value = res.data
+  } catch (e) {
+    // console.error('Failed to fetch AI status')
+  }
 }
 
 onMounted(() => {
   loadingSys.value = true
-  Promise.all([fetchSysInfo(), fetchZlmMetrics()]).finally(() => {
+  Promise.all([fetchSysInfo(), fetchZlmMetrics(), fetchAiTasks()]).finally(() => {
     loadingSys.value = false
   })
   
   // Refresh system info every 5 seconds
   refreshInterval = setInterval(() => {
     fetchSysInfo()
+    fetchAiTasks()
   }, 5000)
+
+  // Refresh ZLM metrics every 1 second
+  zlmInterval = setInterval(() => {
+    fetchZlmMetrics()
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
-  if (refreshInterval) {
-    clearInterval(refreshInterval)
-  }
+  if (refreshInterval) clearInterval(refreshInterval)
+  if (zlmInterval) clearInterval(zlmInterval)
 })
 </script>
 
@@ -263,5 +307,19 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   font-size: 13px;
   color: #606266;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-dot.green {
+  background-color: #67C23A;
+  box-shadow: 0 0 5px #67C23A;
+}
+.status-dot.yellow {
+  background-color: #E6A23C;
+  box-shadow: 0 0 5px #E6A23C;
 }
 </style>
