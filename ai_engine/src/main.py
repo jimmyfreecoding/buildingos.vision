@@ -274,13 +274,13 @@ class AreaStateManager:
             self.level3_triggered = False
             is_occupied = True
             
-            # 只有当这是状态转变（刚从无人变为有人），或者是我们想要持续记录“有人”的过程时才发事件。
-            # 为了避免每5秒发一次 LEVEL_1_DECISION 把日志撑爆，我们可以限制频率，或者只在状态改变时发。
-            # 但用户想看过程记录，所以我们增加一个 throttle，比如每隔 1 分钟（或者当人数发生变化时）记录一次 LEVEL_1_DECISION
+            # 为了防止前端看到完全卡死，并且满足用户希望观察算法运行过程的需求
+            # 我们将记录频率从原来的 60 秒改短，比如 10 秒，这样用户能更频繁地看到最新截图
+            # 但是为了避免数据无限膨胀，我们在前端最好有分页或清理机制，这里我们在后端把频率设为 10秒一次
             if not hasattr(self, 'last_level1_time'):
                 self.last_level1_time = 0
                 
-            if current_time - self.last_level1_time > 60: # 1 minute throttle for LEVEL_1_DECISION logging
+            if current_time - self.last_level1_time > 10: # 10 seconds throttle
                 event_type = "LEVEL_1_DECISION"
                 self.last_level1_time = current_time
             else:
@@ -403,8 +403,8 @@ pose_model = get_model("pose_v8n", "pose")
 # Run a dummy inference to warm up
 try:
     dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-    pose_model(dummy_frame, verbose=False)
-    print("Pose model warmed up.")
+    pose_model(dummy_frame, verbose=False, device=0)
+    print("Pose model warmed up on GPU.")
 except Exception as e:
     print(f"Warning: Pose model warmup failed: {e}")
 
@@ -412,8 +412,8 @@ except Exception as e:
 # We look for smoking_specialist.pt. If missing, get_model defaults to yolov8n.pt
 smoking_specialist = get_model("smoking_specialist", "detect")
 try:
-    smoking_specialist(dummy_frame, verbose=False)
-    print("Specialist model warmed up.")
+    smoking_specialist(dummy_frame, verbose=False, device=0)
+    print("Specialist model warmed up on GPU.")
 except Exception as e:
     print(f"Warning: Specialist model warmup failed: {e}")
 
@@ -661,7 +661,8 @@ def process_occupancy_areas():
                         motion_score = 0.0 
                         
                         # Process with pose model
-                        results = pose_model(frame, conf=OCCUPANCY_CONF, verbose=False)
+                        # IMPORTANT: Explicitly use device=0 or device='cuda:0' to force GPU inference
+                        results = pose_model(frame, conf=OCCUPANCY_CONF, verbose=False, device=0)
                         
                         annotated_frame = frame.copy()
                         person_count = 0
