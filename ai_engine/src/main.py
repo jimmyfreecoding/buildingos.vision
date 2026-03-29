@@ -461,9 +461,10 @@ def get_upper_body_crop(frame, box):
     return frame[cy1:cy2, cx1:cx2], (cx1, cy1, cx2, cy2)
 
 def capture_frame(stream_url):
-    """Captures a single frame from the given RTSP URL."""
+    """Captures a single frame from the given URL."""
     try:
-        if stream_url.startswith('http'):
+        # If it's a Snapshot API (returns a single JPEG image), use requests
+        if 'getSnap' in stream_url:
             import requests
             import numpy as np
             # Increase timeout since API might be slow
@@ -476,6 +477,7 @@ def capture_frame(stream_url):
                 print(f"HTTP capture failed with status {resp.status_code}: {resp.text}")
             return None
             
+        # For video streams (RTSP or HTTP-FLV), use OpenCV
         # Fallback for RTSP (we use a timeout env to prevent hanging)
         os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "5000" # Avoid infinite blocking
         
@@ -588,21 +590,19 @@ def process_occupancy_areas():
                         print(f"[{cam_id}] Skipping capture because stream is not ready in ZLM.")
                         continue
                     
-                    # Instead of hitting the ZLM API first (which seems to fail in this environment or block)
-                    # Let's hit the internal http-flv stream directly.
-                    # OpenCV has a bug with RTSP over FFMPEG in Jetson, but usually works fine with HTTP-FLV.
-                    # If that fails, we fallback to requests based getSnap API.
+                    # Since ZLM is converting to all formats, we can use the getSnap API to get a JPEG safely without OpenCV blocking.
+                    # If that fails, we fallback to OpenCV reading the HTTP-FLV stream, and finally RTSP.
                     
                     internal_flv = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
-                    print(f"[{cam_id}] Attempting to capture from HTTP-FLV: {internal_flv}")
-                    frame = capture_frame(internal_flv)
+                    encoded_flv = urllib.parse.quote(internal_flv)
+                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5"
+                    
+                    print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
+                    frame = capture_frame(snapshot_url)
                     
                     if frame is None:
-                        # Fallback to pure HTTP API from ZLM
-                        encoded_flv = urllib.parse.quote(internal_flv)
-                        snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5"
-                        print(f"[{cam_id}] FLV failed. Attempting to capture from ZLM Snapshot API: {snapshot_url}")
-                        frame = capture_frame(snapshot_url)
+                        print(f"[{cam_id}] Snapshot API failed. Attempting to capture from HTTP-FLV: {internal_flv}")
+                        frame = capture_frame(internal_flv)
                         
                         if frame is None:
                             print(f"[{cam_id}] All HTTP capture methods failed. Falling back to original stream URL.")
