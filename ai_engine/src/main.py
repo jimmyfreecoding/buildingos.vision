@@ -469,6 +469,8 @@ def capture_frame(stream_url):
             import numpy as np
             # Increase timeout since API might be slow
             print(f"[capture_frame] Requesting snapshot URL: {stream_url}")
+            # Ensure the URL is passed correctly to requests.
+            # requests handles some url encoding itself, so we pass it as is.
             resp = requests.get(stream_url, timeout=10)
             if resp.status_code == 200:
                 # ZLM getSnap returns JSON if error, else returns image data.
@@ -604,10 +606,15 @@ def process_occupancy_areas():
                     
                     # NOTE: ZLM's getSnap API requires the URL of the FLV or RTMP stream.
                     internal_flv = f"http://127.0.0.1:80/live/{zlm_stream_id}.live.flv"
+                    # DO NOT url encode the whole thing, just the internal URL
+                    # the quote function is escaping the : and / characters which is correct for query params
                     encoded_flv = urllib.parse.quote(internal_flv, safe='')
-                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5&expire_sec=10"
+                    
+                    # We MUST use the zlm container hostname when calling from ai-engine
+                    snapshot_url = f"http://zlm:80/index/api/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5&expire_sec=10"
                     
                     print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
+                    
                     frame = capture_frame(snapshot_url)
                     
                     if frame is None:
