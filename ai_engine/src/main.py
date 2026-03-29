@@ -581,15 +581,24 @@ def process_occupancy_areas():
                     # Since ZLM is converting to all formats, we can pull the http-flv stream which OpenCV handles better for polling
                     # Fallback to pure HTTP API from ZLM
                     # The getSnap API takes a URL parameter, let's pass the internal RTSP URL that ZLM proxies
-                    internal_rtsp = f"rtsp://zlm:554/live/{zlm_stream_id}"
-                    encoded_rtsp = urllib.parse.quote(internal_rtsp)
-                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_rtsp}&timeout_sec=5"
+                    # Wait, if ZLM is playing FLV, the internal stream is ready.
+                    # The getSnap API signature: http://127.0.0.1/index/api/getSnap?secret=035c73f7-bb6b-4889-a715-d9eb2d1925cc&url=http://127.0.0.1/live/test.live.flv&timeout_sec=10
+                    # Let's ask ZLM to snapshot its own FLV stream to ensure compatibility!
+                    internal_flv = f"http://127.0.0.1:80/live/{zlm_stream_id}.live.flv"
+                    encoded_flv = urllib.parse.quote(internal_flv)
+                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5"
                         
                     print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
                     frame = capture_frame(snapshot_url)
                     
                     if frame is None:
-                         print(f"[{cam_id}] Snapshot API failed, no fallback to avoid OpenCV FFMPEG crash.")
+                         print(f"[{cam_id}] Snapshot API failed. Attempting direct FLV read with OpenCV as last resort.")
+                         # Since ZLM is up, we can try to pass the FLV directly to cv2, without any environment vars
+                         # Wait, previously we failed. Let's try HTTP MJPEG if available, or just standard FLV
+                         fallback_flv_url = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
+                         frame = capture_frame(fallback_flv_url)
+                         if frame is None:
+                             print(f"[{cam_id}] All capture methods failed.")
                     
                     if frame is not None:
                         # Add logic to calculate motion score if needed, currently 0
@@ -811,7 +820,7 @@ if __name__ == "__main__":
         if task_type == 'occupancy':
             continue # Occupancy is now handled by the polling thread
 
-        if len(stream_list) > 0:
+        if isinstance(stream_list, list) and len(stream_list) > 0:
             for stream_conf in stream_list:
                 t = threading.Thread(target=stream_worker, args=(stream_conf, task_type))
                 t.daemon = True
