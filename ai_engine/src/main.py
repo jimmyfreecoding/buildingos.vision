@@ -657,6 +657,7 @@ def process_occupancy_areas():
                                 print(f"[{cam_id}] Original stream capture also failed.")
                     
                     if frame is not None:
+                        print(f"[{cam_id}] Frame captured successfully. Running AI inference...")
                         # Add logic to calculate motion score if needed, currently 0
                         motion_score = 0.0 
                         
