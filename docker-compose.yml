@@ -58,6 +58,8 @@ services:
       - ./ai_engine/models:/app/models
       # 移除写死的旧配置挂载路径，保持全局统一
       - ./ai_engine/config:/app/ai_engine/config
+      # 挂载源码目录，方便开发时修改代码立即生效（重启容器即可）
+      - ./ai_engine/src:/app/src
       - zlm_www_data:/app/www # 仍然挂载 zlm_www_data 用于保存截图和视频
     depends_on:
       - zlm
