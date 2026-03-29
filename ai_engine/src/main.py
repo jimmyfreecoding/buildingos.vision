@@ -273,7 +273,19 @@ class AreaStateManager:
             self.level2_triggered = False
             self.level3_triggered = False
             is_occupied = True
-            event_type = "LEVEL_1_DECISION"
+            
+            # 只有当这是状态转变（刚从无人变为有人），或者是我们想要持续记录“有人”的过程时才发事件。
+            # 为了避免每5秒发一次 LEVEL_1_DECISION 把日志撑爆，我们可以限制频率，或者只在状态改变时发。
+            # 但用户想看过程记录，所以我们增加一个 throttle，比如每隔 1 分钟（或者当人数发生变化时）记录一次 LEVEL_1_DECISION
+            if not hasattr(self, 'last_level1_time'):
+                self.last_level1_time = 0
+                
+            if current_time - self.last_level1_time > 60: # 1 minute throttle for LEVEL_1_DECISION logging
+                event_type = "LEVEL_1_DECISION"
+                self.last_level1_time = current_time
+            else:
+                event_type = None # skip logging this time, but state is still ACTIVE
+                
         else:
             time_since_last_seen = (current_time - self.last_occupied_time) / 60.0 # in minutes
             
