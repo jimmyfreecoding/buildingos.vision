@@ -463,11 +463,6 @@ def get_upper_body_crop(frame, box):
 def capture_frame(stream_url):
     """Captures a single frame from the given RTSP URL."""
     try:
-        # Some OpenCV builds on Jetson with FFMPEG backend have issues with http/rtsp streams
-        # Using GSTREAMER backend or simple HTTP requests for images is safer.
-        
-        # If it's an HTTP URL (like ZLM getSnap), we can use requests + numpy to decode directly
-        # bypassing OpenCV's VideoCapture entirely which is the source of the "Unable to open RTSP for listening" errors.
         if stream_url.startswith('http'):
             import requests
             import numpy as np
@@ -476,23 +471,26 @@ def capture_frame(stream_url):
                 image_array = np.asarray(bytearray(resp.content), dtype=np.uint8)
                 frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
                 return frame
+            else:
+                print(f"HTTP capture failed with status {resp.status_code}: {resp.text}")
             return None
             
+        # Fallback for local debugging, but should not be hit in prod with HTTP
         cap = cv2.VideoCapture(stream_url)
     except Exception as e:
         print(f"Error capturing frame: {e}")
         return None
     
-    if not cap.isOpened():
+    if 'cap' in locals() and not cap.isOpened():
         return None
-    
-    # Read a few frames to clear buffer and get a fresh one
-    for _ in range(3):
-        ret, frame = cap.read()
-    
-    cap.release()
-    if ret:
-        return frame
+        
+    if 'cap' in locals():
+        for _ in range(3):
+            ret, frame = cap.read()
+        cap.release()
+        if ret:
+            return frame
+            
     return None
 
 def process_occupancy_areas():
@@ -581,9 +579,10 @@ def process_occupancy_areas():
                     
                     # Workaround: Use ZLM's http-flv or snapshot instead of RTSP to avoid OpenCV "Unable to open RTSP for listening" error
                     # Since ZLM is converting to all formats, we can pull the http-flv stream which OpenCV handles better for polling
-                    # Actually, for polling, getting a direct snapshot via ZLM's HTTP API is the safest and fastest way!
-                    # ZLM Snapshot API: /index/api/getSnap?secret=xxx&url=rtsp://...
-                    encoded_rtsp = urllib.parse.quote(stream_url)
+                    # Fallback to pure HTTP API from ZLM
+                    # The getSnap API takes a URL parameter, let's pass the internal RTSP URL that ZLM proxies
+                    internal_rtsp = f"rtsp://zlm:554/live/{zlm_stream_id}"
+                    encoded_rtsp = urllib.parse.quote(internal_rtsp)
                     snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_rtsp}&timeout_sec=5"
                         
                     print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
@@ -807,15 +806,18 @@ if __name__ == "__main__":
         occupancy_thread.start()
         threads.append(occupancy_thread)
 
-    for task_type, stream_list in config['streams'].items():
+    # Only start other stream workers (like smoking) if they actually have cameras configured
+    for task_type, stream_list in config.get('streams', {}).items():
         if task_type == 'occupancy':
             continue # Occupancy is now handled by the polling thread
 
-        for stream_conf in stream_list:
-            t = threading.Thread(target=stream_worker, args=(stream_conf, task_type))
-            t.daemon = True
-            t.start()
-            threads.append(t)
+        if len(stream_list) > 0:
+            for stream_conf in stream_list:
+                t = threading.Thread(target=stream_worker, args=(stream_conf, task_type))
+                t.daemon = True
+                t.start()
+                threads.append(t)
+                
     print(f"Started {len(threads)} background threads.")
     try:
         while True:
