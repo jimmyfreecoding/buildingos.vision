@@ -604,8 +604,8 @@ def process_occupancy_areas():
                     
                     # NOTE: ZLM's getSnap API requires the URL of the FLV or RTMP stream.
                     internal_flv = f"http://127.0.0.1:80/live/{zlm_stream_id}.live.flv"
-                    encoded_flv = urllib.parse.quote(internal_flv)
-                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5"
+                    encoded_flv = urllib.parse.quote(internal_flv, safe='')
+                    snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5&expire_sec=10"
                     
                     print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
                     frame = capture_frame(snapshot_url)
