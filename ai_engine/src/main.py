@@ -468,11 +468,19 @@ def capture_frame(stream_url):
             import requests
             import numpy as np
             # Increase timeout since API might be slow
+            print(f"[capture_frame] Requesting snapshot URL: {stream_url}")
             resp = requests.get(stream_url, timeout=10)
             if resp.status_code == 200:
-                image_array = np.asarray(bytearray(resp.content), dtype=np.uint8)
-                frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-                return frame
+                # ZLM getSnap returns JSON if error, else returns image data.
+                # Check Content-Type to be sure
+                content_type = resp.headers.get('Content-Type', '')
+                if 'image' in content_type:
+                    image_array = np.asarray(bytearray(resp.content), dtype=np.uint8)
+                    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                    return frame
+                else:
+                    print(f"getSnap returned non-image data: {resp.text}")
+                    return None
             else:
                 print(f"HTTP capture failed with status {resp.status_code}: {resp.text}")
             return None
@@ -481,6 +489,7 @@ def capture_frame(stream_url):
         # Fallback for RTSP (we use a timeout env to prevent hanging)
         os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "5000" # Avoid infinite blocking
         
+        print(f"[capture_frame] Attempting VideoCapture on URL: {stream_url}")
         # force use FFMPEG backend, but if not exist, default is used.
         try:
             cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
@@ -593,7 +602,8 @@ def process_occupancy_areas():
                     # Since ZLM is converting to all formats, we can use the getSnap API to get a JPEG safely without OpenCV blocking.
                     # If that fails, we fallback to OpenCV reading the HTTP-FLV stream, and finally RTSP.
                     
-                    internal_flv = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
+                    # NOTE: ZLM's getSnap API requires the URL of the FLV or RTMP stream.
+                    internal_flv = f"http://127.0.0.1:80/live/{zlm_stream_id}.live.flv"
                     encoded_flv = urllib.parse.quote(internal_flv)
                     snapshot_url = f"{ZLM_API_URL}/getSnap?secret={ZLM_SECRET}&url={encoded_flv}&timeout_sec=5"
                     
@@ -601,8 +611,10 @@ def process_occupancy_areas():
                     frame = capture_frame(snapshot_url)
                     
                     if frame is None:
-                        print(f"[{cam_id}] Snapshot API failed. Attempting to capture from HTTP-FLV: {internal_flv}")
-                        frame = capture_frame(internal_flv)
+                        # try local flv url for opencv since it runs in the same compose network
+                        local_flv = f"http://zlm:80/live/{zlm_stream_id}.live.flv"
+                        print(f"[{cam_id}] Snapshot API failed. Attempting to capture from HTTP-FLV: {local_flv}")
+                        frame = capture_frame(local_flv)
                         
                         if frame is None:
                             print(f"[{cam_id}] All HTTP capture methods failed. Falling back to original stream URL.")
