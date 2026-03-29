@@ -467,11 +467,24 @@ def capture_frame(stream_url):
         if 'getSnap' in stream_url:
             import requests
             import numpy as np
+            from urllib.parse import urlparse, parse_qs
+            
+            # Parse the URL and its parameters manually so we can pass them cleanly to requests
+            parsed_url = urlparse(stream_url)
+            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+            
+            # Parse query string into dictionary
+            # Note: parse_qs returns values as lists, we need the first item
+            query_params = parse_qs(parsed_url.query)
+            params = {k: v[0] for k, v in query_params.items()}
+            
             # Increase timeout since API might be slow
-            print(f"[capture_frame] Requesting snapshot URL: {stream_url}")
-            # Ensure the URL is passed correctly to requests.
-            # requests handles some url encoding itself, so we pass it as is.
-            resp = requests.get(stream_url, timeout=10)
+            print(f"[capture_frame] Requesting snapshot Base URL: {base_url}")
+            print(f"[capture_frame] Requesting snapshot Params: {params}")
+            
+            # Use params dict so requests handles the url encoding perfectly
+            resp = requests.get(base_url, params=params, timeout=10)
+            
             if resp.status_code == 200:
                 # ZLM getSnap returns JSON if error, else returns image data.
                 # Check Content-Type to be sure
@@ -615,6 +628,8 @@ def process_occupancy_areas():
                     
                     print(f"[{cam_id}] Attempting to capture from ZLM Snapshot API: {snapshot_url}")
                     
+                    # Instead of using requests directly inside process_occupancy_areas which we reverted,
+                    # we will use our unified capture_frame function which now uses params
                     frame = capture_frame(snapshot_url)
                     
                     if frame is None:
