@@ -413,6 +413,92 @@ app.get('/api/occupancy/logs', (req, res) => {
     }
 });
 
+// --- 6. Gemma Local Model API ---
+const GEMMA_HOST = process.env.GEMMA_HOST || '172.17.0.1'; // Default docker bridge to host
+const GEMMA_PORT = process.env.GEMMA_PORT || 8080;
+
+app.get('/api/gemma/status', (req, res) => {
+    http.get(`http://${GEMMA_HOST}:${GEMMA_PORT}/health`, (gemmaRes) => {
+        if (gemmaRes.statusCode === 200) {
+            res.json({ status: 'Running' });
+        } else {
+            res.json({ status: 'Error' });
+        }
+    }).on('error', (err) => {
+        res.json({ status: 'Offline', error: err.message });
+    });
+});
+
+const clearGemmaCache = () => {
+    const deleteOptions = {
+        hostname: GEMMA_HOST,
+        port: GEMMA_PORT,
+        path: '/slots/0',
+        method: 'DELETE'
+    };
+    const delReq = http.request(deleteOptions, (delRes) => {
+        console.log(`Gemma context cache cleared, status: ${delRes.statusCode}`);
+    });
+    delReq.on('error', (err) => {
+        console.error('Failed to clear Gemma context cache:', err.message);
+    });
+    delReq.end();
+};
+
+app.post('/api/gemma/infer', (req, res) => {
+    const { image, prompt } = req.body; // image should be base64 string, prompt is text
+
+    const payload = JSON.stringify({
+        model: "gemma",
+        messages: [
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: prompt || "Describe this image in detail." },
+                    { type: "image_url", image_url: { url: image } }
+                ]
+            }
+        ],
+        temperature: 0.1,
+        max_tokens: 512
+    });
+
+    const options = {
+        hostname: GEMMA_HOST,
+        port: GEMMA_PORT,
+        path: '/v1/chat/completions',
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    const gemmaReq = http.request(options, (gemmaRes) => {
+        let data = '';
+        gemmaRes.on('data', (chunk) => { data += chunk; });
+        gemmaRes.on('end', () => {
+            try {
+                const response = JSON.parse(data);
+                res.json({ result: response.choices?.[0]?.message?.content || 'No result', raw: response });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse Gemma response', raw: data });
+            } finally {
+                // 主动释放 Cache
+                clearGemmaCache();
+            }
+        });
+    });
+
+    gemmaReq.on('error', (err) => {
+        res.status(500).json({ error: 'Failed to connect to Gemma server', details: err.message });
+        clearGemmaCache();
+    });
+
+    gemmaReq.write(payload);
+    gemmaReq.end();
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Backend server running on http://localhost:${PORT}`);

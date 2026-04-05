@@ -35,6 +35,10 @@
           <el-icon><Connection /></el-icon>
           <span>网络设置</span>
         </el-menu-item>
+        <el-menu-item index="/local-model">
+          <el-icon><Cpu /></el-icon>
+          <span>本地模型推理</span>
+        </el-menu-item>
         <el-menu-item @click="handleReboot">
           <el-icon><SwitchButton /></el-icon>
           <span>重启设备</span>
@@ -56,7 +60,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { VideoCamera, Setting, Connection, SwitchButton, Monitor, DataLine, Document } from '@element-plus/icons-vue'
+import { VideoCamera, Setting, Connection, SwitchButton, Monitor, DataLine, Document, Cpu } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 

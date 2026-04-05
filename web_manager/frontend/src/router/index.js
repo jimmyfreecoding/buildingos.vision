@@ -28,6 +28,10 @@ const routes = [
   {
     path: '/network',
     component: () => import('../views/Network.vue')
+  },
+  {
+    path: '/local-model',
+    component: () => import('../views/LocalModel.vue')
   }
 ]
 
