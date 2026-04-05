@@ -93,6 +93,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # 允许控制重启容器
       - ./:/host_project                            # 允许执行 git pull / compose 操作
+      - /tmp:/host_tmp:ro
       # 修复：直接将宿主机的配置文件目录挂载进来，不使用命名卷以避免初始化为空
       - ./ai_engine/config:/app/ai_engine/config
       - zlm_www_data:/app/www # 挂载静态文件目录以读取算法日志

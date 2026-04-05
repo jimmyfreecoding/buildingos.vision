@@ -87,6 +87,19 @@ app.get('/api/ping', (req, res) => {
 
 app.get('/api/system/info', (req, res) => {
     try {
+        const jtopFiles = ['/host_tmp/jtop_status.json', '/tmp/jtop_status.json'];
+        const jtopFile = jtopFiles.find(file => fs.existsSync(file));
+        if (jtopFile) {
+            const jtopData = JSON.parse(fs.readFileSync(jtopFile, 'utf8'));
+            if (jtopData.error) {
+                return res.status(503).json({ error: jtopData.error, useFallback: true });
+            }
+            if (Date.now() / 1000 - jtopData.timestamp > 5) {
+                console.warn("jtop status data is stale.");
+            }
+            return res.json(jtopData);
+        }
+        
         const totalMem = os.totalmem();
         const freeMem = os.freemem();
         const usedMem = totalMem - freeMem;
@@ -94,61 +107,44 @@ app.get('/api/system/info', (req, res) => {
         
         const cpus = os.cpus();
         
-        // Jetson Orin Nano doesn't use nvidia-smi, it uses tegrastats.
-        // Reading /sys/devices/gpu.0/load is a common way to get GPU load on Jetson without parsing tegrastats continuously.
-        exec('cat /sys/devices/gpu.0/load', (error, stdout, stderr) => {
+        exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (smiErr, smiOut) => {
             let gpuInfo = { util: 0, memUsed: 0, memTotal: 0 };
-            
-            if (!error && stdout) {
-                // Jetson GPU load is 0-1000, so we divide by 10
-                const load = parseInt(stdout.trim(), 10);
-                if (!isNaN(load)) {
-                    gpuInfo.util = load / 10;
+            if (!smiErr && smiOut) {
+                const parts = smiOut.split(',').map(s => s.trim());
+                if (parts.length >= 3) {
+                    gpuInfo = {
+                        util: parseFloat(parts[0]),
+                        memUsed: parseFloat(parts[1]),
+                        memTotal: parseFloat(parts[2])
+                    };
                 }
-                
-                // For unified memory on Jetson, GPU memory is essentially system memory.
-                // We can just mirror system memory for the "GPU" card to avoid confusion, 
-                // or leave it as N/A. Let's just show system memory usage for the unified architecture.
-                gpuInfo.memTotal = Math.round(totalMem / (1024 * 1024));
-                gpuInfo.memUsed = Math.round(usedMem / (1024 * 1024));
-            } else {
-                // Fallback to nvidia-smi if not on Jetson
-                exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (smiErr, smiOut) => {
-                    if (!smiErr && smiOut) {
-                        const parts = smiOut.split(',').map(s => s.trim());
-                        if (parts.length >= 3) {
-                            gpuInfo = {
-                                util: parseFloat(parts[0]),
-                                memUsed: parseFloat(parts[1]),
-                                memTotal: parseFloat(parts[2])
-                            };
-                        }
-                    }
-                });
             }
-
-            // Small delay to allow nvidia-smi to complete if it was called
-            setTimeout(() => {
-                res.json({
-                    cpu: {
-                        cores: cpus.length,
-                        model: cpus[0].model,
-                        usage: Math.random() * 100 // Mock CPU usage for quick demo, a real impl needs interval measuring
-                    },
-                    memory: {
-                        total: totalMem,
-                        free: freeMem,
+            
+            res.json({
+                cpu: {
+                    usage: Math.random() * 100, // Mock for fallback
+                    cores: cpus.length,
+                    details: {}
+                },
+                memory: {
+                    ram: {
+                        usagePercent: memUsage,
                         used: usedMem,
-                        usagePercent: memUsage
+                        total: totalMem
                     },
-                    gpu: gpuInfo,
-                    os: {
-                        platform: os.platform(),
-                        release: os.release(),
-                        uptime: os.uptime()
-                    }
-                });
-            }, 100);
+                    swap: { usagePercent: 0, used: 0, total: 0 }
+                },
+                gpu: gpuInfo,
+                engines: {},
+                power: { total: 0, gpu: 0, cpu: 0 },
+                temperature: {},
+                board: {
+                    model: 'Fallback System',
+                    jetpack: 'N/A',
+                    nvpmodel: 'N/A',
+                    uptime: os.uptime()
+                }
+            });
         });
     } catch (e) {
         res.status(500).json({ error: e.message });

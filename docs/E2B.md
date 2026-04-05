@@ -910,6 +910,93 @@ curl -X DELETE http://127.0.0.1:8080/slots/0
 ```
 这能立刻释放掉之前图片占用的大量上下文内存，而不需要重启整个 Gemma 进程。
 
+### 17.3 jtop 采集守护进程 systemd 落地 (开机自启 + 自动重拉)
+
+为了让 Web Dashboard 长期稳定读取 Jetson 实时硬件状态（CPU / RAM / Swap / GPU / Power / 温度 / 引擎占用），建议将 `jtop_daemon.py` 托管给 systemd，而不是手工在终端运行。
+
+#### 17.3.1 前置依赖
+
+```bash
+sudo pip3 install -U jetson-stats
+sudo systemctl restart jetson_stats.service
+```
+
+确保项目脚本已存在：
+
+```bash
+ls -l /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
+```
+
+#### 17.3.2 创建服务文件
+
+新建：
+
+`/etc/systemd/system/jtop-daemon.service`
+
+写入以下内容：
+
+```ini
+[Unit]
+Description=BuildingOS jtop monitoring daemon
+After=network-online.target jetson_stats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=buildingos
+WorkingDirectory=/home/buildingos/buildingos.vision/web_manager/backend
+ExecStart=/usr/bin/python3 /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 17.3.3 启用、启动、查看
+
+```bash
+# 重新加载 systemd 配置
+sudo systemctl daemon-reload
+
+# 开机自启
+sudo systemctl enable jtop-daemon.service
+
+# 立刻启动
+sudo systemctl start jtop-daemon.service
+
+# 查看状态
+sudo systemctl status jtop-daemon.service
+
+# 实时日志
+sudo journalctl -u jtop-daemon.service -f
+```
+
+#### 17.3.4 常用运维命令
+
+```bash
+# 重启服务（修改脚本后常用）
+sudo systemctl restart jtop-daemon.service
+
+# 停止服务
+sudo systemctl stop jtop-daemon.service
+
+# 取消开机自启
+sudo systemctl disable jtop-daemon.service
+```
+
+#### 17.3.5 验证桥接文件是否持续更新
+
+```bash
+ls -l /tmp/jtop_status.json
+cat /tmp/jtop_status.json | head
+```
+
+如果时间戳持续变化，说明采集正常；若 `systemd` 检测到脚本异常退出，会按 `Restart=always` 自动拉起，满足“断线自动重拉”的要求。
+
 ---
 
 ## 18.实际安装落地步骤

@@ -6,45 +6,100 @@
         <el-card class="box-card system-card">
           <template #header>
             <div class="card-header">
-              <span><el-icon><Monitor /></el-icon> 边缘计算节点状态 (Orin Nano)</span>
+              <span><el-icon><Monitor /></el-icon> 边缘计算节点状态 ({{ sysInfo.board.model }})</span>
             </div>
           </template>
           <div v-loading="loadingSys" class="sys-content">
-            <el-row :gutter="20" class="sys-metrics">
-              <el-col :span="8" class="metric-item">
-                <el-progress type="dashboard" :percentage="sysInfo.cpu.usage" :color="customColors">
+            <!-- First Row: Main Usage Metrics -->
+            <el-row :gutter="10" class="sys-metrics">
+              <el-col :span="6" class="metric-item">
+                <el-progress type="dashboard" :percentage="sysInfo.cpu.usage" :color="customColors" :width="100">
                   <template #default="{ percentage }">
-                    <span class="percentage-value">{{ percentage.toFixed(1) }}%</span>
+                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
                     <span class="percentage-label">CPU 负载</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">{{ sysInfo.cpu.cores }} Cores</div>
+                <div class="metric-note">持续高于 85% 可能导致推理排队</div>
               </el-col>
-              <el-col :span="8" class="metric-item">
-                <el-progress type="dashboard" :percentage="sysInfo.memory.usagePercent" :color="customColors">
+              <el-col :span="6" class="metric-item">
+                <el-progress type="dashboard" :percentage="sysInfo.memory.ram.usagePercent" :color="customColors" :width="100">
                   <template #default="{ percentage }">
-                    <span class="percentage-value">{{ percentage.toFixed(1) }}%</span>
-                    <span class="percentage-label">内存使用</span>
+                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
+                    <span class="percentage-label">统一内存</span>
                   </template>
                 </el-progress>
-                <div class="metric-desc">{{ formatBytes(sysInfo.memory.used) }} / {{ formatBytes(sysInfo.memory.total) }}</div>
+                <div class="metric-desc">{{ formatBytes(sysInfo.memory.ram.used) }} / {{ formatBytes(sysInfo.memory.ram.total) }}</div>
+                <div class="metric-note">统一内存过高会压缩 GPU 可用空间</div>
               </el-col>
-              <el-col :span="8" class="metric-item">
-                <el-progress type="dashboard" :percentage="sysInfo.gpu.util" :color="customColors">
+              <el-col :span="6" class="metric-item">
+                <el-progress type="dashboard" :percentage="sysInfo.memory.swap.usagePercent" :color="customColors" :width="100">
                   <template #default="{ percentage }">
-                    <span class="percentage-value">{{ percentage.toFixed(1) }}%</span>
+                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
+                    <span class="percentage-label">Swap (虚拟)</span>
+                  </template>
+                </el-progress>
+                <div class="metric-desc">{{ formatBytes(sysInfo.memory.swap.used) }} / {{ formatBytes(sysInfo.memory.swap.total) }}</div>
+                <div class="metric-note">持续增长说明内存紧张，易触发抖动</div>
+              </el-col>
+              <el-col :span="6" class="metric-item">
+                <el-progress type="dashboard" :percentage="sysInfo.gpu.util" :color="customColors" :width="100">
+                  <template #default="{ percentage }">
+                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
                     <span class="percentage-label">GPU (TensorRT)</span>
                   </template>
                 </el-progress>
-                <div class="metric-desc">Mem: {{ sysInfo.gpu.memUsed }}MB / {{ sysInfo.gpu.memTotal }}MB</div>
+                <div class="metric-desc">Mem: {{ sysInfo.gpu.memUsed.toFixed(0) }}MB / {{ sysInfo.gpu.memTotal.toFixed(0) }}MB</div>
+                <div class="metric-note">高利用率 + 频率下降通常是热/功耗限制</div>
               </el-col>
             </el-row>
-            <el-divider />
+            
+            <el-divider style="margin: 10px 0;" />
+            
+            <!-- Second Row: Hardware Vitals (Power, Temp) -->
             <el-descriptions :column="2" border size="small">
-              <el-descriptions-item label="OS Platform">{{ sysInfo.os.platform }} {{ sysInfo.os.release }}</el-descriptions-item>
-              <el-descriptions-item label="Uptime">{{ formatUptime(sysInfo.os.uptime) }}</el-descriptions-item>
-              <el-descriptions-item label="CPU Model">{{ sysInfo.cpu.model }}</el-descriptions-item>
+              <el-descriptions-item label="Power (整机功耗)">
+                <el-tag size="small" type="warning" effect="plain">{{ (sysInfo.power.total / 1000).toFixed(1) }} W</el-tag>
+                <span style="font-size: 12px; color: #909399; margin-left: 5px;">(GPU: {{ (sysInfo.power.gpu / 1000).toFixed(1) }} W)</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="Temperatures">
+                <span style="font-size: 12px;">
+                  GPU: <span :style="{ color: gpuTemp > 75 ? 'red' : 'inherit' }">{{ gpuTemp || 'N/A' }}°C</span> | 
+                  CPU: <span :style="{ color: cpuTemp > 75 ? 'red' : 'inherit' }">{{ cpuTemp || 'N/A' }}°C</span>
+                </span>
+              </el-descriptions-item>
+              <el-descriptions-item label="NVPModel">
+                <el-tag size="small" type="success">{{ sysInfo.board.nvpmodel }}</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="Uptime">{{ formatUptime(sysInfo.board.uptime) }}</el-descriptions-item>
             </el-descriptions>
+
+            <el-divider style="margin: 10px 0;" />
+
+            <el-alert
+              v-for="(warning, idx) in systemWarnings"
+              :key="idx"
+              :title="warning"
+              type="warning"
+              show-icon
+              :closable="false"
+              class="warning-item"
+            />
+
+            <el-card shadow="never" class="engine-panel">
+              <div class="engine-header">硬件引擎占用面板</div>
+              <div class="engine-tags">
+                <el-tag
+                  v-for="engine in engineEntries"
+                  :key="engine.name"
+                  size="small"
+                  :type="engine.value > 60 ? 'danger' : (engine.value > 0 ? 'warning' : 'info')"
+                >
+                  {{ engine.name }}: {{ formatEngineValue(engine.value) }}
+                </el-tag>
+              </div>
+              <div class="engine-note">用于判断视频链路是否抢占资源：NVDEC/NVENC/VIC 持续高占用时，本地大模型响应会变慢。</div>
+            </el-card>
           </div>
         </el-card>
 
@@ -187,13 +242,22 @@ import { Monitor, VideoCamera, Cpu } from '@element-plus/icons-vue'
 const loadingSys = ref(false)
 let refreshInterval = null
 let zlmInterval = null
+const prevSwapUsed = ref(0)
+const prevGpuFreq = ref(0)
+const systemWarnings = ref([])
 
 // Sys Info State
 const sysInfo = ref({
-  cpu: { usage: 0, cores: 0, model: '' },
-  memory: { usagePercent: 0, used: 0, total: 0 },
-  gpu: { util: 0, memUsed: 0, memTotal: 0 },
-  os: { platform: '', release: '', uptime: 0 }
+  cpu: { usage: 0, cores: 0, details: {} },
+  memory: { 
+    ram: { usagePercent: 0, used: 0, total: 0 },
+    swap: { usagePercent: 0, used: 0, total: 0 }
+  },
+  gpu: { util: 0, memUsed: 0, memTotal: 0, freq: 0 },
+  engines: {},
+  power: { total: 0, gpu: 0, cpu: 0 },
+  temperature: {},
+  board: { model: 'Loading...', jetpack: '', nvpmodel: '', uptime: 0 }
 })
 
 // ZLM State
@@ -241,6 +305,23 @@ const totalBandwidth = computed(() => {
   return zlmData.value.reduce((sum, item) => sum + (item.bytesSpeed || 0), 0) / zlmData.value.length || 0; 
 })
 
+const engineEntries = computed(() => {
+  const engines = sysInfo.value.engines || {}
+  return Object.entries(engines).map(([name, value]) => ({
+    name,
+    value: typeof value === 'number' ? value : (value ? 100 : 0)
+  }))
+})
+
+const getTempByKeys = (keys) => {
+  const temps = sysInfo.value.temperature || {}
+  const found = Object.entries(temps).find(([name]) => keys.includes(name))
+  return found ? found[1] : 0
+}
+
+const gpuTemp = computed(() => getTempByKeys(['GPU', 'gpu', 'GPU-therm', 'gpu-therm', 'TGPU']))
+const cpuTemp = computed(() => getTempByKeys(['CPU', 'cpu', 'CPU-therm', 'cpu-therm', 'TCPU']))
+
 // Formatting Helpers
 const formatBytes = (bytes, decimals = 2) => {
   if (!+bytes) return '0 Bytes'
@@ -253,7 +334,7 @@ const formatBytes = (bytes, decimals = 2) => {
 
 const formatUptime = (seconds) => {
   if (!seconds) return '0s'
-  const d = Math.floor(seconds / (3600*24*24))
+  const d = Math.floor(seconds / (3600*24))
   const h = Math.floor(seconds % (3600*24) / 3600)
   const m = Math.floor(seconds % 3600 / 60)
   const s = Math.floor(seconds % 60)
@@ -265,13 +346,63 @@ const formatUptime = (seconds) => {
   return dDisplay + hDisplay + mDisplay + sDisplay
 }
 
+const formatEngineValue = (value) => {
+  if (typeof value !== 'number') return String(value)
+  return `${value.toFixed(0)}%`
+}
+
+const updateWarnings = (data) => {
+  const warnings = []
+  const ramUsage = data?.memory?.ram?.usagePercent || 0
+  const swapUsage = data?.memory?.swap?.usagePercent || 0
+  const swapUsed = data?.memory?.swap?.used || 0
+  const gpuUtil = data?.gpu?.util || 0
+  const gpuFreq = data?.gpu?.freq || 0
+
+  if (ramUsage >= 90) {
+    warnings.push('统一内存使用率超过 90%，大模型推理可能出现明显延迟。')
+  }
+
+  if (swapUsage >= 50) {
+    warnings.push('Swap 使用率超过 50%，系统已经进入高压力区。')
+  }
+
+  if (prevSwapUsed.value > 0) {
+    const swapDeltaMb = (swapUsed - prevSwapUsed.value) / (1024 * 1024)
+    if (swapDeltaMb > 20) {
+      warnings.push(`Swap 在最近一次采样增长 ${swapDeltaMb.toFixed(1)} MB，存在持续抖动风险。`)
+    }
+  }
+
+  if (prevGpuFreq.value > 0 && gpuUtil >= 85 && gpuFreq < prevGpuFreq.value * 0.85) {
+    warnings.push('GPU 利用率高且频率明显下降，可能触发热限制或功耗限制。')
+  }
+
+  if (gpuTemp.value >= 80 || cpuTemp.value >= 80) {
+    warnings.push('温度接近高温区，请关注散热与风扇状态。')
+  }
+
+  const engines = data?.engines || {}
+  const heavyEngines = Object.entries(engines)
+    .filter(([, value]) => typeof value === 'number' && value >= 60)
+    .map(([name]) => name)
+  if (heavyEngines.length > 0) {
+    warnings.push(`硬件引擎高占用：${heavyEngines.join('、')}，视频链路可能在抢占资源。`)
+  }
+
+  systemWarnings.value = warnings
+  prevSwapUsed.value = swapUsed
+  prevGpuFreq.value = gpuFreq
+}
+
 // Fetchers
 const fetchSysInfo = async () => {
   try {
     const res = await axios.get('/api/system/info')
     sysInfo.value = res.data
+    updateWarnings(res.data)
   } catch (e) {
-    // console.error('Failed to fetch system info')
+    systemWarnings.value = ['系统状态获取失败，请检查 jtop 采集服务或网络连接。']
   }
 }
 
@@ -314,11 +445,10 @@ onMounted(() => {
     loadingSys.value = false
   })
   
-  // Refresh system info every 5 seconds
   refreshInterval = setInterval(() => {
     fetchSysInfo()
     fetchAiTasks()
-  }, 5000)
+  }, 1000)
 
   // Refresh ZLM metrics every 1 second
   zlmInterval = setInterval(() => {
@@ -371,6 +501,35 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   font-size: 13px;
   color: #606266;
+}
+.metric-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #909399;
+  text-align: center;
+}
+.warning-item {
+  margin-top: 8px;
+}
+.engine-panel {
+  margin-top: 10px;
+  border: 1px solid #ebeef5;
+}
+.engine-header {
+  font-size: 13px;
+  color: #303133;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.engine-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.engine-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 .status-dot {
   width: 8px;
