@@ -914,6 +914,8 @@ curl -X DELETE http://127.0.0.1:8080/slots/0
 
 为了让 Web Dashboard 长期稳定读取 Jetson 实时硬件状态（CPU / RAM / Swap / GPU / Power / 温度 / 引擎占用），建议将 `jtop_daemon.py` 托管给 systemd，而不是手工在终端运行。
 
+注意：`jtop-daemon.service` 不是系统预置服务，Docker 也不会自动在宿主机创建该 unit。首次部署必须在宿主机手工创建一次，后续即可由 systemd 托管并自动拉起。
+
 #### 17.3.1 前置检查
 
 当前设备统一按 Jetson Nano 8G 标准环境交付，`jtop.service` 已存在。落地前仅需确认服务与脚本状态：
@@ -934,7 +936,32 @@ ls -l /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
 
 `/etc/systemd/system/jtop-daemon.service`
 
-写入以下内容：
+推荐直接使用下面一条命令创建服务文件（可避免手工编辑格式错误）：
+
+```bash
+sudo tee /etc/systemd/system/jtop-daemon.service > /dev/null << 'EOF'
+[Unit]
+Description=BuildingOS jtop monitoring daemon
+After=network-online.target jtop.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=buildingos
+WorkingDirectory=/home/buildingos/buildingos.vision/web_manager/backend
+ExecStart=/usr/bin/python3 /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+等价配置内容如下：
 
 ```ini
 [Unit]

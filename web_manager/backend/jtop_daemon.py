@@ -25,24 +25,39 @@ def main():
     with jtop() as jetson:
         while jetson.ok():
             try:
-                # 1. CPU Info
+                # 1. CPU Info (兼容不同 jtop 数据结构)
+                cpu_obj = jetson.cpu if isinstance(jetson.cpu, dict) else {}
+                cpu_cores = cpu_obj.get('cpu', []) if isinstance(cpu_obj.get('cpu', []), list) else []
                 cpu_data = {
                     "usage": 0,
-                    "cores": len(jetson.cpu),
+                    "cores": len(cpu_cores),
                     "details": {}
                 }
-                total_cpu_usage = 0
-                active_cores = 0
-                for name, core in jetson.cpu.items():
-                    if 'val' in core:
-                        total_cpu_usage += core['val']
-                        active_cores += 1
-                        cpu_data["details"][name] = {
-                            "usage": core['val'],
-                            "freq": core.get('frq', 0)
+                if cpu_cores:
+                    total_cpu_usage = 0
+                    for i, core in enumerate(cpu_cores):
+                        idle = float(core.get('idle', 100) or 100)
+                        usage = max(0.0, min(100.0, 100.0 - idle))
+                        freq_cur = 0
+                        freq_info = core.get('freq', {})
+                        if isinstance(freq_info, dict):
+                            freq_cur = freq_info.get('cur', 0) or 0
+                        if not freq_cur:
+                            info_freq = core.get('info_freq', {})
+                            if isinstance(info_freq, dict):
+                                freq_cur = info_freq.get('cur', 0) or 0
+                        cpu_data["details"][f"cpu{i}"] = {
+                            "usage": usage,
+                            "freq": int(freq_cur)
                         }
-                if active_cores > 0:
-                    cpu_data["usage"] = total_cpu_usage / active_cores
+                        total_cpu_usage += usage
+                    cpu_data["usage"] = total_cpu_usage / len(cpu_cores)
+                else:
+                    # fallback: 老结构 total/val
+                    total = cpu_obj.get('total', {}) if isinstance(cpu_obj, dict) else {}
+                    if isinstance(total, dict):
+                        idle = float(total.get('idle', 100) or 100)
+                        cpu_data["usage"] = max(0.0, min(100.0, 100.0 - idle))
 
                 # 2. Memory (RAM & Swap)
                 ram = jetson.memory.get('RAM', {})
@@ -68,11 +83,21 @@ def main():
                 }
 
                 # 3. GPU Info
-                gpu = jetson.gpu
+                gpu = jetson.gpu if isinstance(jetson.gpu, dict) else {}
+                if 'gpu' in gpu and isinstance(gpu.get('gpu'), dict):
+                    gpu = gpu.get('gpu')
+                gpu_status = gpu.get('status', {}) if isinstance(gpu.get('status', {}), dict) else {}
+                gpu_freq = gpu.get('freq', {}) if isinstance(gpu.get('freq', {}), dict) else {}
+                gpu_load = gpu_status.get('load', gpu.get('val', 0))
+                if isinstance(gpu_load, str):
+                    try:
+                        gpu_load = float(gpu_load)
+                    except Exception:
+                        gpu_load = 0
                 gpu_data = {
-                    "util": gpu.get('val', 0),
-                    "freq": gpu.get('frq', 0),
-                    "freqMax": gpu.get('frq_max', gpu.get('max', 0)),
+                    "util": float(gpu_load or 0),
+                    "freq": int(gpu_freq.get('cur', gpu.get('frq', 0)) or 0),
+                    "freqMax": int(gpu_freq.get('max', gpu.get('frq_max', gpu.get('max', 0))) or 0),
                     "memUsed": memory_data["ram"]["used"] / (1024*1024), # In MB, mirroring unified RAM
                     "memTotal": memory_data["ram"]["total"] / (1024*1024)
                 }
@@ -81,20 +106,39 @@ def main():
                 engines_data = {}
                 for name, engine in jetson.engine.items():
                     if isinstance(engine, dict):
-                        engines_data[name] = engine.get('val', 0)
+                        if 'val' in engine:
+                            engines_data[name] = engine.get('val', 0)
+                        else:
+                            # 新结构: {"NVDEC":{"online":false,"cur":...}, ...}
+                            sub_values = []
+                            for sub_engine in engine.values():
+                                if isinstance(sub_engine, dict):
+                                    if sub_engine.get('online', False):
+                                        sub_values.append(100)
+                                    elif 'val' in sub_engine:
+                                        sub_values.append(sub_engine.get('val', 0))
+                                    else:
+                                        sub_values.append(0)
+                            engines_data[name] = max(sub_values) if sub_values else 0
                     elif isinstance(engine, bool):
                         engines_data[name] = 100 if engine else 0
                     else:
                         engines_data[name] = 0
 
                 # 5. Power
+                power_obj = jetson.power if isinstance(jetson.power, dict) else {}
+                power_tot = power_obj.get('tot', {}) if isinstance(power_obj.get('tot', {}), dict) else {}
+                power_rail = power_obj.get('rail', {}) if isinstance(power_obj.get('rail', {}), dict) else {}
+                vdd_cpu_gpu_cv = power_rail.get('VDD_CPU_GPU_CV', {}) if isinstance(power_rail.get('VDD_CPU_GPU_CV', {}), dict) else {}
+                vdd_soc = power_rail.get('VDD_SOC', {}) if isinstance(power_rail.get('VDD_SOC', {}), dict) else {}
                 power_data = {
-                    "total": jetson.power.get('tot', {}).get('avg', 0), # mW
-                    "gpu": jetson.power.get('gpu', {}).get('avg', 0),
-                    "cpu": jetson.power.get('cpu', {}).get('avg', 0),
-                    "soc": jetson.power.get('soc', {}).get('avg', 0),
-                    "cv": jetson.power.get('cv', {}).get('avg', 0),
-                    "vdd_in": jetson.power.get('VDD_IN', {}).get('avg', jetson.power.get('vdd_in', {}).get('avg', 0))
+                    "total": power_tot.get('avg', power_tot.get('power', 0)),
+                    "gpu": power_obj.get('gpu', {}).get('avg', 0) if isinstance(power_obj.get('gpu', {}), dict) else 0,
+                    "cpu": power_obj.get('cpu', {}).get('avg', 0) if isinstance(power_obj.get('cpu', {}), dict) else 0,
+                    "soc": power_obj.get('soc', {}).get('avg', vdd_soc.get('avg', vdd_soc.get('power', 0))) if isinstance(power_obj.get('soc', {}), dict) else vdd_soc.get('avg', vdd_soc.get('power', 0)),
+                    "cv": power_obj.get('cv', {}).get('avg', 0) if isinstance(power_obj.get('cv', {}), dict) else 0,
+                    "vdd_in": power_tot.get('avg', power_tot.get('power', 0)),
+                    "cpu_gpu_cv": vdd_cpu_gpu_cv.get('avg', vdd_cpu_gpu_cv.get('power', 0))
                 }
 
                 # 6. Temperatures
@@ -123,9 +167,12 @@ def main():
                 else:
                     uptime_value = 0
 
+                board_obj = jetson.board if isinstance(jetson.board, dict) else {}
+                board_info = board_obj.get('info', {}) if isinstance(board_obj.get('info', {}), dict) else {}
+                board_hardware = board_obj.get('hardware', {}) if isinstance(board_obj.get('hardware', {}), dict) else {}
                 board_data = {
-                    "model": jetson.board.get('info', {}).get('machine', 'Unknown Jetson'),
-                    "jetpack": jetson.board.get('info', {}).get('jetpack', 'Unknown'),
+                    "model": board_info.get('machine', board_hardware.get('Model', board_hardware.get('Module', board_obj.get('model', 'Unknown Jetson')))),
+                    "jetpack": board_info.get('jetpack', board_obj.get('jetpack', board_obj.get('L4T', 'Unknown'))),
                     "nvpmodel": nvpmodel_value,
                     "jetsonClocks": jetson_clocks_value,
                     "uptime": uptime_value
