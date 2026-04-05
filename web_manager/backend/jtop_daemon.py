@@ -115,12 +115,20 @@ def main():
                 else:
                     jetson_clocks_value = str(jetson_clocks_obj)
 
+                uptime_obj = getattr(jetson, 'uptime', 0)
+                if hasattr(uptime_obj, 'total_seconds'):
+                    uptime_value = int(uptime_obj.total_seconds())
+                elif isinstance(uptime_obj, (int, float)):
+                    uptime_value = int(uptime_obj)
+                else:
+                    uptime_value = 0
+
                 board_data = {
                     "model": jetson.board.get('info', {}).get('machine', 'Unknown Jetson'),
                     "jetpack": jetson.board.get('info', {}).get('jetpack', 'Unknown'),
                     "nvpmodel": nvpmodel_value,
                     "jetsonClocks": jetson_clocks_value,
-                    "uptime": jetson.uptime
+                    "uptime": uptime_value
                 }
 
                 # Combine all data
