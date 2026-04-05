@@ -262,7 +262,9 @@ class AreaStateManager:
         # Time bias (0.2 during 9:00-18:00, else 0)
         time_bias = 0.2 if 9 <= now.hour < 18 else 0.0
         
-        total_score = (visual_score * 0.6) + (motion_score * 0.2) + (time_bias * 0.2)
+        # 优化打分公式：以视觉分数为基准，时间和移动作为加分项
+        # 避免夜间或无移动分数时，视觉分数被乘以 0.6 导致永远无法达到 score_threshold 的bug
+        total_score = visual_score + (motion_score * 0.2) + (time_bias * 0.5)
         
         event_type = None
         is_occupied = False

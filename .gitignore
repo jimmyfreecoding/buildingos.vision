@@ -24,3 +24,4 @@ __pycache__/
 web_manager/**/node_modules/
 web_manager/frontend/dist/
 node_modules/
+model/
