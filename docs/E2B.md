@@ -874,7 +874,45 @@ def run_gemma_review(review_fn, *args, **kwargs):
 3. 为短语音命令或语音转写增加本地入口
 4. 建立串行任务队列，避免与 YOLO 抢 GPU
 
-## 17.实际安装落地步骤
+---
+
+## 17. 性能优化与内存管理建议 (Jetson Orin Nano 8GB)
+
+在统一内存架构的 Jetson 设备上，内存（显存）是最宝贵的资源。为了确保 YOLO 视频流推理与 Gemma 4 E2B 本地大模型能够稳定共存，强烈建议进行以下优化：
+
+### 17.1 关闭图形桌面 (GUI) 释放内存
+
+默认开启的 Ubuntu 图形桌面（GNOME/LightDM 等）会占用约 **800MB 到 1.2GB** 的基础内存。关闭 GUI 可以将这部分内存完全释放给 AI 模型使用，极大降低 OOM 风险。
+
+**操作方法：**
+打开终端，将系统默认启动级别设置为命令行模式（multi-user），然后重启：
+```bash
+sudo systemctl set-default multi-user.target
+sudo reboot
+```
+
+**影响评估：**
+- **不会影响**：后台服务（如 Docker 容器、Nginx、Web Manager）、AI 推理加速（CUDA/TensorRT）、硬件编解码（NVDEC）、SSH 远程登录。
+- **会受影响**：无法通过连接物理显示器查看桌面；运行 Python 脚本时不能使用 `cv2.imshow()` 弹出本地窗口。
+
+*(如需恢复图形桌面，执行 `sudo systemctl set-default graphical.target` 并重启即可)*
+
+### 17.2 及时清理 Gemma 推理缓存 (Context Slots)
+
+在使用 `llama.cpp` (`llama-server`) 提供单次图片/文本复核服务时，每次推理都会在内存中占用大量的上下文缓存（Context Slots）。由于我们的业务通常是“单次无状态分析”（不依赖多轮对话历史），因此**推理结束后必须主动释放缓存**。
+
+**操作方法：**
+在 Python 或 Node.js 业务代码中，在每次请求 `/v1/chat/completions` 完成后，发送一个 `DELETE` 请求到 `/slots/0` 端点（假设使用 `--parallel 1` 启动）：
+
+```bash
+# 命令行测试释放缓存
+curl -X DELETE http://127.0.0.1:8080/slots/0
+```
+这能立刻释放掉之前图片占用的大量上下文内存，而不需要重启整个 Gemma 进程。
+
+---
+
+## 18.实际安装落地步骤
 
 # 1. 永久修复 CUDA 环境变量
 
