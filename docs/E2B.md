@@ -914,14 +914,15 @@ curl -X DELETE http://127.0.0.1:8080/slots/0
 
 为了让 Web Dashboard 长期稳定读取 Jetson 实时硬件状态（CPU / RAM / Swap / GPU / Power / 温度 / 引擎占用），建议将 `jtop_daemon.py` 托管给 systemd，而不是手工在终端运行。
 
-#### 17.3.1 前置依赖
+#### 17.3.1 前置检查
+
+当前设备统一按 Jetson Nano 8G 标准环境交付，`jtop.service` 已存在。落地前仅需确认服务与脚本状态：
 
 ```bash
-sudo pip3 install -U jetson-stats
-sudo systemctl restart jetson_stats.service
+sudo systemctl status jtop.service
 ```
 
-确保项目脚本已存在：
+确保项目脚本存在：
 
 ```bash
 ls -l /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
@@ -938,7 +939,7 @@ ls -l /home/buildingos/buildingos.vision/web_manager/backend/jtop_daemon.py
 ```ini
 [Unit]
 Description=BuildingOS jtop monitoring daemon
-After=network-online.target jetson_stats.service
+After=network-online.target jtop.service
 Wants=network-online.target
 
 [Service]
@@ -996,6 +997,89 @@ cat /tmp/jtop_status.json | head
 ```
 
 如果时间戳持续变化，说明采集正常；若 `systemd` 检测到脚本异常退出，会按 `Restart=always` 自动拉起，满足“断线自动重拉”的要求。
+
+### 17.4 jtop 采样字段对照清单 (现场排查速查)
+
+为便于现场快速判断“性能瓶颈在 CPU / 内存 / GPU / 视频链路哪一侧”，下面给出 Dashboard 与 `jtop_daemon.py` 对应的数据字段说明。
+
+#### 17.4.1 CPU
+
+- `cpu.usage`：CPU 总体使用率（%）
+- `cpu.cores`：CPU 核心数
+- `cpu.details.<core>.usage`：单核使用率（%）
+- `cpu.details.<core>.freq`：单核当前频率（MHz）
+
+排查建议：
+
+- `cpu.usage` 长期 > 85%：会导致请求排队，推理时延上升
+- 单核长期打满：优先排查 Python 侧串行热点或日志 IO 压力
+
+#### 17.4.2 RAM / SWAP（统一内存）
+
+- `memory.ram.used/total/free/shared/cached/buffers`
+- `memory.ram.usagePercent`
+- `memory.swap.used/total/cached`
+- `memory.swap.usagePercent`
+
+排查建议：
+
+- `ram.usagePercent` > 90%：GPU 可用统一内存被挤占
+- `swap.used` 持续增长：系统进入抖动风险区，应降并发或减负载
+
+#### 17.4.3 GPU
+
+- `gpu.util`：GPU 利用率（%）
+- `gpu.freq`：GPU 当前频率（MHz）
+- `gpu.freqMax`：GPU 理论上限频率（MHz）
+- `gpu.memUsed/memTotal`：按统一内存口径映射的显存占用（MB）
+
+排查建议：
+
+- `gpu.util` 高但 `gpu.freq` 明显下降：常见于热限制/功耗限制
+- `gpu.util` 低且时延高：可能是 CPU 侧或视频链路在抢资源
+
+#### 17.4.4 功耗 Power
+
+- `power.total`：整机功耗（mW）
+- `power.gpu` / `power.cpu`
+- `power.soc` / `power.cv`
+- `power.vdd_in`：输入总功耗轨（机型相关）
+
+排查建议：
+
+- 功耗接近平台上限且频率下降：优先检查散热、风扇、nvpmodel
+
+#### 17.4.5 温度 Temperature
+
+- `temperature.<sensor>`：各温区温度（°C），如 GPU、CPU、SOC 热区
+
+排查建议：
+
+- 温度持续 > 80°C：建议立即关注热降频与风扇策略
+
+#### 17.4.6 硬件引擎 Engine
+
+- `engines.NVDEC`：解码引擎占用
+- `engines.NVENC`：编码引擎占用
+- `engines.VIC`：图像合成/缩放引擎占用
+- `engines.NVJPG`：JPEG 引擎占用
+- `engines.NVDLA*`：DLA 引擎（若机型支持）
+
+排查建议：
+
+- `NVDEC/NVENC/VIC` 长期高占用：视频链路正在抢资源，LLM 响应会变慢
+
+#### 17.4.7 板卡状态 Board
+
+- `board.model`
+- `board.jetpack`
+- `board.nvpmodel`
+- `board.jetsonClocks`
+- `board.uptime`
+
+排查建议：
+
+- `nvpmodel` 非预期模式时，先统一切回部署基线后再比较性能
 
 ---
 
