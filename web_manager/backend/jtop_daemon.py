@@ -103,11 +103,23 @@ def main():
                     temp_data[name] = sensor.get('temp', 0)
 
                 # 7. Board Info & Status
+                nvpmodel_obj = getattr(jetson, 'nvpmodel', None)
+                if isinstance(nvpmodel_obj, dict):
+                    nvpmodel_value = nvpmodel_obj.get('name', 'Unknown')
+                else:
+                    nvpmodel_value = getattr(nvpmodel_obj, 'name', None) or str(nvpmodel_obj) if nvpmodel_obj is not None else 'Unknown'
+
+                jetson_clocks_obj = getattr(jetson, 'jetson_clocks', None)
+                if isinstance(jetson_clocks_obj, (bool, int, float, str)) or jetson_clocks_obj is None:
+                    jetson_clocks_value = jetson_clocks_obj
+                else:
+                    jetson_clocks_value = str(jetson_clocks_obj)
+
                 board_data = {
                     "model": jetson.board.get('info', {}).get('machine', 'Unknown Jetson'),
                     "jetpack": jetson.board.get('info', {}).get('jetpack', 'Unknown'),
-                    "nvpmodel": jetson.nvpmodel.get('name', 'Unknown'),
-                    "jetsonClocks": getattr(jetson, 'jetson_clocks', None),
+                    "nvpmodel": nvpmodel_value,
+                    "jetsonClocks": jetson_clocks_value,
                     "uptime": jetson.uptime
                 }
 
