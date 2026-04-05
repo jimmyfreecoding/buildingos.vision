@@ -29,6 +29,7 @@
             <el-option label="基础描述 (Describe this image)" value="Describe this image in detail." />
             <el-option label="抽烟检测验证" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons." />
             <el-option label="安全帽佩戴验证" value="Are all people in the image wearing safety helmets? Detail any violations." />
+            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果有，请指出他们的位置。" />
             <el-option label="自定义 (Custom)" value="custom" />
           </el-select>
         </el-form-item>
@@ -64,11 +65,45 @@
         </el-form-item>
       </el-form>
       
-      <div class="result-section" v-if="inferResult || inferError">
+      <div class="result-section" v-if="inferResult || inferError || inferring">
         <el-divider>推理结果</el-divider>
         <el-alert v-if="inferError" :title="inferError" type="error" show-icon :closable="false" />
-        <div v-else class="result-box">
-          <pre>{{ inferResult }}</pre>
+        <div v-else-if="inferring" class="loading-state">
+          <el-skeleton :rows="5" animated />
+        </div>
+        <div v-else class="result-container">
+          <!-- Reasoning Collapse (if present) -->
+          <el-collapse v-if="inferReasoning" class="reasoning-collapse">
+            <el-collapse-item name="1">
+              <template #title>
+                <el-icon class="header-icon"><Cpu /></el-icon> Reasoning (思考过程)
+              </template>
+              <div class="reasoning-content">
+                <pre>{{ inferReasoning }}</pre>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
+          <!-- Final Result -->
+          <div class="result-box">
+            <pre>{{ inferResult }}</pre>
+          </div>
+
+          <!-- Metrics Footer -->
+          <div v-if="inferMetrics" class="metrics-footer">
+            <div class="metric-item">
+              <el-icon><Document /></el-icon>
+              <span>{{ inferMetrics.contextStr }}</span>
+            </div>
+            <div class="metric-item">
+              <el-icon><Aim /></el-icon>
+              <span>{{ inferMetrics.outputStr }}</span>
+            </div>
+            <div class="metric-item">
+              <el-icon><Odometer /></el-icon>
+              <span>{{ inferMetrics.speedStr }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </el-card>
@@ -77,7 +112,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { Refresh, Plus } from '@element-plus/icons-vue'
+import { Refresh, Plus, Cpu, Aim, Odometer, Document } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
@@ -86,6 +121,8 @@ const loadingStatus = ref(false)
 
 const inferring = ref(false)
 const inferResult = ref('')
+const inferReasoning = ref('')
+const inferMetrics = ref(null)
 const inferError = ref('')
 
 const inferForm = ref({
@@ -155,6 +192,8 @@ const submitInference = async () => {
 
   inferring.value = true
   inferResult.value = ''
+  inferReasoning.value = ''
+  inferMetrics.value = null
   inferError.value = ''
 
   try {
@@ -167,6 +206,23 @@ const submitInference = async () => {
       inferError.value = res.data.error + (res.data.details ? `: ${res.data.details}` : '')
     } else {
       inferResult.value = res.data.result
+      inferReasoning.value = res.data.reasoning
+      
+      // Calculate metrics if available
+      if (res.data.usage && res.data.timings) {
+        const promptTokens = res.data.usage.prompt_tokens || 0
+        const totalContext = 4096 // Typical context size, adjust if needed
+        const contextPercent = Math.round((promptTokens / totalContext) * 100)
+        
+        const predictedTokens = res.data.timings.predicted_n || 0
+        const tokensPerSecond = (res.data.timings.predicted_per_second || 0).toFixed(1)
+        
+        inferMetrics.value = {
+          contextStr: `Context: ${promptTokens}/${totalContext} (${contextPercent}%)`,
+          outputStr: `Output: ${predictedTokens}/∞`,
+          speedStr: `${tokensPerSecond} t/s`
+        }
+      }
     }
   } catch (err) {
     inferError.value = err.response?.data?.error || err.message || '推理请求失败'
@@ -237,14 +293,76 @@ onMounted(() => {
   margin-top: 30px;
 }
 
-.result-box {
-  background-color: #f4f4f5;
-  padding: 15px;
+.result-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.reasoning-collapse {
+  border: 1px solid var(--el-border-color-light);
   border-radius: 4px;
-  border: 1px solid #e9e9eb;
+}
+
+.reasoning-collapse :deep(.el-collapse-item__header) {
+  padding-left: 15px;
+  background-color: #fafafa;
+  color: #606266;
+  font-weight: bold;
+}
+
+.header-icon {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+.reasoning-content {
+  padding: 15px;
+  background-color: #fff;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.reasoning-content pre {
+  margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
+  color: #909399;
   font-family: monospace;
   line-height: 1.5;
+  font-size: 13px;
+}
+
+.result-box {
+  background-color: #f0f9eb;
+  padding: 15px;
+  border-radius: 4px;
+  border: 1px solid #e1f3d8;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: #303133;
+  font-family: monospace;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.metrics-footer {
+  display: flex;
+  justify-content: flex-start;
+  gap: 30px;
+  margin-top: 5px;
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+  color: #909399;
+  font-size: 12px;
+}
+
+.metric-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.loading-state {
+  padding: 20px;
 }
 </style>

@@ -450,17 +450,26 @@ app.post('/api/gemma/infer', (req, res) => {
     const { image, prompt } = req.body; // image should be base64 string, prompt is text
 
     const payload = JSON.stringify({
-        model: "gemma",
+        model: "buildingos_review_engine",
         messages: [
+            {
+                role: "system",
+                content: "不要输出思考过程。请简明扼要地回答问题，必要时描述方位。"
+            },
             {
                 role: "user",
                 content: [
-                    { type: "text", text: prompt || "Describe this image in detail." },
-                    { type: "image_url", image_url: { url: image } }
+                    { type: "image_url", image_url: { url: image } },
+                    { type: "text", text: prompt || "Describe this image in detail." }
                 ]
             }
         ],
-        temperature: 0.1,
+        chat_template_kwargs: {
+            enable_thinking: true // Enable thinking for UI display
+        },
+        stream: false,
+        temperature: 0.0,
+        top_p: 0.9,
         max_tokens: 512
     });
 
@@ -481,7 +490,13 @@ app.post('/api/gemma/infer', (req, res) => {
         gemmaRes.on('end', () => {
             try {
                 const response = JSON.parse(data);
-                res.json({ result: response.choices?.[0]?.message?.content || 'No result', raw: response });
+                res.json({ 
+                    result: response.choices?.[0]?.message?.content || 'No result', 
+                    reasoning: response.choices?.[0]?.message?.reasoning_content || '',
+                    usage: response.usage,
+                    timings: response.timings,
+                    raw: response 
+                });
             } catch (e) {
                 res.status(500).json({ error: 'Failed to parse Gemma response', raw: data });
             } finally {
