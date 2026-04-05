@@ -26,10 +26,10 @@
       <el-form :model="inferForm" label-width="120px" @submit.prevent>
         <el-form-item label="推理提示词模版">
           <el-select v-model="inferForm.promptTemplate" placeholder="请选择提示词模版" style="width: 100%" @change="onTemplateChange">
-            <el-option label="基础描述 (Describe this image)" value="Describe this image in detail." />
-            <el-option label="抽烟检测验证" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons." />
-            <el-option label="安全帽佩戴验证" value="Are all people in the image wearing safety helmets? Detail any violations." />
-            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果有，请指出他们的位置。" />
+            <el-option label="基础描述 (Describe this image)" value="Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)" />
+            <el-option label="抽烟检测验证" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons. Please reply in Chinese. (图片中是否有人在抽烟？用中文回复是或否，并说明理由。)" />
+            <el-option label="安全帽佩戴验证" value="Are all people in the image wearing safety helmets? Detail any violations. Please reply in Chinese. (图片中所有人是否都佩戴了安全帽？请用中文详细说明违规情况。)" />
+            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果有，请指出他们的位置。请用中文回复。" />
             <el-option label="自定义 (Custom)" value="custom" />
           </el-select>
         </el-form-item>
@@ -56,6 +56,14 @@
             <img v-if="inferForm.imageUrl" :src="inferForm.imageUrl" class="avatar" />
             <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
           </el-upload>
+        </el-form-item>
+
+        <el-form-item label="开启思考过程">
+          <el-switch
+            v-model="inferForm.enableThinking"
+            active-text="是 (更准确，但较慢)"
+            inactive-text="否 (快速回复)"
+          />
         </el-form-item>
 
         <el-form-item>
@@ -92,6 +100,10 @@
           <!-- Metrics Footer -->
           <div v-if="inferMetrics" class="metrics-footer">
             <div class="metric-item">
+              <el-icon><Timer /></el-icon>
+              <span>{{ inferMetrics.durationStr }}</span>
+            </div>
+            <div class="metric-item">
               <el-icon><Document /></el-icon>
               <span>{{ inferMetrics.contextStr }}</span>
             </div>
@@ -112,7 +124,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { Refresh, Plus, Cpu, Aim, Odometer, Document } from '@element-plus/icons-vue'
+import { Refresh, Plus, Cpu, Aim, Odometer, Document, Timer } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
@@ -126,10 +138,11 @@ const inferMetrics = ref(null)
 const inferError = ref('')
 
 const inferForm = ref({
-  promptTemplate: 'Describe this image in detail.',
-  prompt: 'Describe this image in detail.',
+  promptTemplate: 'Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)',
+  prompt: 'Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)',
   imageUrl: '',
-  imageBase64: ''
+  imageBase64: '',
+  enableThinking: true
 })
 
 const statusType = ref('info')
@@ -199,7 +212,8 @@ const submitInference = async () => {
   try {
     const res = await axios.post('/api/gemma/infer', {
       image: inferForm.value.imageBase64,
-      prompt: inferForm.value.prompt
+      prompt: inferForm.value.prompt,
+      enableThinking: inferForm.value.enableThinking
     })
     
     if (res.data.error) {
@@ -216,11 +230,13 @@ const submitInference = async () => {
         
         const predictedTokens = res.data.timings.predicted_n || 0
         const tokensPerSecond = (res.data.timings.predicted_per_second || 0).toFixed(1)
+        const durationSec = ((res.data.durationMs || 0) / 1000).toFixed(2)
         
         inferMetrics.value = {
           contextStr: `Context: ${promptTokens}/${totalContext} (${contextPercent}%)`,
           outputStr: `Output: ${predictedTokens}/∞`,
-          speedStr: `${tokensPerSecond} t/s`
+          speedStr: `${tokensPerSecond} t/s`,
+          durationStr: `Time: ${durationSec} s`
         }
       }
     }

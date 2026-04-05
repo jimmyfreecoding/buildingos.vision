@@ -447,7 +447,7 @@ const clearGemmaCache = () => {
 };
 
 app.post('/api/gemma/infer', (req, res) => {
-    const { image, prompt } = req.body; // image should be base64 string, prompt is text
+    const { image, prompt, enableThinking } = req.body; // image should be base64 string, prompt is text
 
     const payload = JSON.stringify({
         model: "buildingos_review_engine",
@@ -465,7 +465,7 @@ app.post('/api/gemma/infer', (req, res) => {
             }
         ],
         chat_template_kwargs: {
-            enable_thinking: true // Enable thinking for UI display
+            enable_thinking: enableThinking !== undefined ? enableThinking : true // Enable thinking for UI display
         },
         stream: false,
         temperature: 0.0,
@@ -484,10 +484,13 @@ app.post('/api/gemma/infer', (req, res) => {
         }
     };
 
+    const startTime = Date.now();
+
     const gemmaReq = http.request(options, (gemmaRes) => {
         let data = '';
         gemmaRes.on('data', (chunk) => { data += chunk; });
         gemmaRes.on('end', () => {
+            const duration = Date.now() - startTime;
             try {
                 const response = JSON.parse(data);
                 res.json({ 
@@ -495,6 +498,7 @@ app.post('/api/gemma/infer', (req, res) => {
                     reasoning: response.choices?.[0]?.message?.reasoning_content || '',
                     usage: response.usage,
                     timings: response.timings,
+                    durationMs: duration,
                     raw: response 
                 });
             } catch (e) {
