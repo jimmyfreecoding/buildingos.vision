@@ -47,11 +47,59 @@
             </el-descriptions>
           </div>
         </el-card>
+
+        <!-- Gemma Local Model Status Card -->
+        <el-card class="box-card gemma-card">
+          <template #header>
+            <div class="card-header">
+              <span><el-icon><Cpu /></el-icon> 本地大模型状态 (Gemma 4 E2B)</span>
+              <el-tag size="small" :type="gemmaStatus === 'Running' ? 'success' : (gemmaStatus === 'Loading' ? 'warning' : 'danger')">
+                <span style="display: flex; align-items: center; gap: 5px;">
+                  <span v-if="gemmaStatus === 'Running'" class="status-dot green"></span>
+                  <span v-else-if="gemmaStatus === 'Loading'" class="status-dot yellow"></span>
+                  <span v-else class="status-dot red"></span>
+                  {{ gemmaStatus }}
+                </span>
+              </el-tag>
+            </div>
+          </template>
+          <div class="gemma-content" v-loading="loadingSys">
+            <el-descriptions :column="1" border size="small" v-if="gemmaStatus === 'Running' && gemmaDetails">
+              <el-descriptions-item label="模型实例">
+                {{ gemmaDetails.props?.default_generation_settings?.model || 'llama.cpp GGUF Model' }}
+              </el-descriptions-item>
+              <el-descriptions-item label="上下文容量 (Context Size)">
+                {{ gemmaDetails.props?.default_generation_settings?.n_ctx || 'Unknown' }} Tokens
+              </el-descriptions-item>
+              <el-descriptions-item label="当前运行状态">
+                <div v-if="gemmaDetails.slots && gemmaDetails.slots.length > 0">
+                  <div v-for="slot in gemmaDetails.slots" :key="slot.id" style="margin-bottom: 5px;">
+                    <el-tag size="small" :type="slot.state === 0 ? 'info' : 'primary'">
+                      Slot {{ slot.id }}: {{ slot.state === 0 ? 'Idle (空闲)' : 'Processing (推理中...)' }}
+                    </el-tag>
+                    <span v-if="slot.state !== 0" style="margin-left: 10px; font-size: 12px; color: #606266;">
+                      Prompt: {{ slot.n_prompt_tokens }} | Decoded: {{ slot.n_decoded_tokens }}
+                    </span>
+                  </div>
+                </div>
+                <div v-else>
+                  <el-tag size="small" type="info">Idle (空闲)</el-tag>
+                </div>
+              </el-descriptions-item>
+            </el-descriptions>
+            <div v-else-if="gemmaStatus === 'Loading'">
+              <el-alert title="模型正在加载中，请稍候..." type="warning" show-icon :closable="false" />
+            </div>
+            <div v-else>
+              <el-alert title="本地大模型服务未启动或无法连接" type="error" show-icon :closable="false" />
+            </div>
+          </div>
+        </el-card>
       </el-col>
 
       <!-- ZLM Media Server Status Card -->
       <el-col :span="12">
-        <el-card class="box-card zlm-card" style="margin-bottom: 20px;">
+        <el-card class="box-card zlm-card">
           <template #header>
             <div class="card-header">
               <span><el-icon><VideoCamera /></el-icon> 流媒体引擎状态 (ZLMediaKit)</span>
@@ -154,6 +202,10 @@ const zlmData = ref([])
 // AI Tasks State
 const aiTasks = ref([])
 
+// Gemma State
+const gemmaStatus = ref('Unknown')
+const gemmaDetails = ref(null)
+
 const customColors = [
   { color: '#5cb87a', percentage: 60 },
   { color: '#e6a23c', percentage: 80 },
@@ -245,9 +297,20 @@ const fetchAiTasks = async () => {
   }
 }
 
+const fetchGemmaStatus = async () => {
+  try {
+    const res = await axios.get('/api/gemma/status')
+    gemmaStatus.value = res.data.status
+    gemmaDetails.value = res.data.details
+  } catch (e) {
+    gemmaStatus.value = 'Offline'
+    gemmaDetails.value = null
+  }
+}
+
 onMounted(() => {
   loadingSys.value = true
-  Promise.all([fetchSysInfo(), fetchZlmMetrics(), fetchAiTasks()]).finally(() => {
+  Promise.all([fetchSysInfo(), fetchZlmMetrics(), fetchAiTasks(), fetchGemmaStatus()]).finally(() => {
     loadingSys.value = false
   })
   
@@ -260,6 +323,7 @@ onMounted(() => {
   // Refresh ZLM metrics every 1 second
   zlmInterval = setInterval(() => {
     fetchZlmMetrics()
+    fetchGemmaStatus() // fetch Gemma real-time slot state often
   }, 1000)
 })
 
@@ -321,5 +385,9 @@ onBeforeUnmount(() => {
 .status-dot.yellow {
   background-color: #E6A23C;
   box-shadow: 0 0 5px #E6A23C;
+}
+.status-dot.red {
+  background-color: #F56C6C;
+  box-shadow: 0 0 5px #F56C6C;
 }
 </style>

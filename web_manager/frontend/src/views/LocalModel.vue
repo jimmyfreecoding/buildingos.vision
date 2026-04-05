@@ -1,22 +1,5 @@
 <template>
   <div class="local-model-container">
-    <el-card class="box-card status-card">
-      <template #header>
-        <div class="card-header">
-          <span>Gemma 服务状态</span>
-          <el-tag :type="statusType" effect="dark" class="status-tag">
-            {{ gemmaStatus }}
-          </el-tag>
-        </div>
-      </template>
-      <div class="status-details">
-        <p>本地大语言模型与多模态模型服务（Gemma 4 E2B）。当前通过 llama.cpp 提供推理服务接口。</p>
-        <el-button type="primary" :icon="Refresh" @click="fetchStatus" :loading="loadingStatus">
-          刷新状态
-        </el-button>
-      </div>
-    </el-card>
-
     <el-card class="box-card inference-card">
       <template #header>
         <div class="card-header">
@@ -124,12 +107,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { Refresh, Plus, Cpu, Aim, Odometer, Document, Timer } from '@element-plus/icons-vue'
+import { Plus, Cpu, Aim, Odometer, Document, Timer } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-
-const gemmaStatus = ref('Unknown')
-const loadingStatus = ref(false)
 
 const inferring = ref(false)
 const inferResult = ref('')
@@ -144,28 +124,6 @@ const inferForm = ref({
   imageBase64: '',
   enableThinking: true
 })
-
-const statusType = ref('info')
-
-const fetchStatus = async () => {
-  loadingStatus.value = true
-  try {
-    const res = await axios.get('/api/gemma/status')
-    gemmaStatus.value = res.data.status
-    if (gemmaStatus.value === 'Running') {
-      statusType.value = 'success'
-    } else if (gemmaStatus.value === 'Error') {
-      statusType.value = 'danger'
-    } else {
-      statusType.value = 'warning'
-    }
-  } catch (err) {
-    gemmaStatus.value = 'Offline'
-    statusType.value = 'danger'
-  } finally {
-    loadingStatus.value = false
-  }
-}
 
 const onTemplateChange = (val) => {
   if (val !== 'custom') {
@@ -248,7 +206,7 @@ const submitInference = async () => {
 }
 
 onMounted(() => {
-  fetchStatus()
+  // fetchStatus() removed
 })
 </script>
 

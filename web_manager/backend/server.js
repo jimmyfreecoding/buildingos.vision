@@ -419,14 +419,46 @@ const GEMMA_HOST = process.env.GEMMA_HOST || '172.17.0.1'; // Default docker bri
 const GEMMA_PORT = process.env.GEMMA_PORT || 8080;
 
 app.get('/api/gemma/status', (req, res) => {
-    http.get(`http://${GEMMA_HOST}:${GEMMA_PORT}/health`, (gemmaRes) => {
-        if (gemmaRes.statusCode === 200) {
-            res.json({ status: 'Running' });
-        } else {
-            res.json({ status: 'Error' });
+    let statusData = { status: 'Offline', details: null };
+
+    // Helper to make GET requests to Gemma
+    const fetchGemma = (path) => {
+        return new Promise((resolve) => {
+            http.get(`http://${GEMMA_HOST}:${GEMMA_PORT}${path}`, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve({ statusCode: res.statusCode, data: JSON.parse(data) });
+                    } catch (e) {
+                        resolve({ statusCode: res.statusCode, data: null });
+                    }
+                });
+            }).on('error', () => resolve({ statusCode: 500, data: null }));
+        });
+    };
+
+    // First check health
+    fetchGemma('/health').then(async (healthRes) => {
+        if (healthRes.statusCode === 200 && healthRes.data?.status === 'ok') {
+            statusData.status = 'Running';
+            
+            // Fetch slots for real-time processing status
+            const slotsRes = await fetchGemma('/slots');
+            const propsRes = await fetchGemma('/props');
+            
+            statusData.details = {
+                health: healthRes.data,
+                slots: slotsRes.data || [],
+                props: propsRes.data || {}
+            };
+        } else if (healthRes.data?.status === 'loading model') {
+            statusData.status = 'Loading';
+            statusData.details = { health: healthRes.data };
+        } else if (healthRes.statusCode !== 500) {
+            statusData.status = 'Error';
         }
-    }).on('error', (err) => {
-        res.json({ status: 'Offline', error: err.message });
+        res.json(statusData);
     });
 });
 
