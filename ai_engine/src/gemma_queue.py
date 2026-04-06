@@ -29,7 +29,11 @@ class GemmaReviewQueue:
         config = config or {}
         # 强制队列并发上限
         self.concurrency = config.get("gemma_review_queue_concurrency", 1)
-        self.gemma_url = config.get("gemma_api_url", "http://127.0.0.1:8080/completion")
+        # 获取 Gemma API 地址。
+        # 重要：因为 AI 引擎运行在 Docker 容器内，如果 Gemma 运行在宿主机的 8080 端口，
+        # 不能使用 127.0.0.1 (它指向容器自己内部)，而应该使用 host.docker.internal 
+        self.gemma_url = config.get("gemma_api_url", "http://host.docker.internal:8080/completion")
+        self.gemma_slots_url = self.gemma_url.replace("/completion", "/slots/0")
         
         # 优先级队列 (PriorityQueue)，优先级数字越小越先执行
         self.task_queue = queue.PriorityQueue(maxsize=10) # 限制最大积压10个任务，超出的直接降级丢弃
@@ -117,7 +121,7 @@ class GemmaReviewQueue:
         finally:
             # 释放上下文缓存机制 (项目记忆 01KNFKT7RT1JDQF7YPEB9XR8GT)
             try:
-                requests.delete("http://127.0.0.1:8080/slots/0", timeout=2.0)
+                requests.delete(self.gemma_slots_url, timeout=2.0)
             except:
                 pass
 

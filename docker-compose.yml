@@ -64,6 +64,7 @@ services:
       - ZLM_API_SECRET=buildingos_edge_secret_2026
     extra_hosts:
       - "emqx:host-gateway"
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./ai_engine/models:/app/models
       # 移除写死的旧配置挂载路径，保持全局统一
