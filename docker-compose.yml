@@ -119,3 +119,10 @@ volumes:
   web_frontend_data:
   node_red_data:
   portainer_data:
+
+# 定义自定义网络，避开 10.0.x.x 等常见物理局域网网段，防止路由冲突 (host is unreachable)
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

@@ -1,0 +1,4 @@
+# 告诉 Git 不要去把这些二进制大文件当成文本做 CRLF 换行符转换，否则会损坏文件头！
+*.engine binary
+*.onnx binary
+*.pt binary
