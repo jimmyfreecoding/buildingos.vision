@@ -111,7 +111,12 @@ MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
 MQTT_PORT = config.get("mqtt", {}).get("port", 1883)
 MQTT_KEEPALIVE = 60
 
-mqtt_client = mqtt.Client()
+try:
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+except AttributeError:
+    # 兼容老版本 paho-mqtt
+    mqtt_client = mqtt.Client()
+
 try:
     print(f"Connecting to MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}...")
     mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
