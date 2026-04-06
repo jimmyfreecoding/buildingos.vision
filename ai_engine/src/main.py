@@ -79,12 +79,12 @@ mqtt_cooldowns = {}    # MQTT 发送冷却时间戳 (去重键)
 # --- Init TensorRT Engines ---
 print("Initializing TensorRT Models (yolo_infer)...")
 try:
-    pose_model = YoloTensorRTEngine("/app/models/pose_v26m.engine", conf_thres=0.25)
-    smoking_model = YoloTensorRTEngine("/app/models/smoke_v26m.engine", conf_thres=0.3)
+    pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
+    smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
     print("Models loaded successfully.")
 except Exception as e:
     print(f"Failed to load TensorRT engines: {e}")
-    print("Did you compile them to /app/models/pose_v26m.engine and smoke_v26m.engine ?")
+    print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
     pose_model = None
     smoking_model = None
 
@@ -329,15 +329,11 @@ def process_camera(cam_id, cam_info):
 # --- ZLMediaKit Auto-Proxy Setup ---
 def register_cameras_to_zlm():
     print("Waiting for ZLMediaKit to start...")
-    time.sleep(5) # 给 ZLM 留出启动时间
+    # 把等待时间拉长，因为容器启动有先后，ZLM 可能还没就绪
+    time.sleep(10) 
+    
     for cam_id, cam_info in camera_config.items():
         # 这里必须使用摄像头的原始 RTSP 物理地址注册到 ZLM 中
-        # 旧版可能存为 'source_url'，统一解析后的结构可能在不同地方，所以优先取 source_url，如果没有再取 url
-        # 补充：在 get_unified_cameras 中，我们把物理地址塞到了 'url' 里，但这会导致 ZLM 循环代理。
-        # 正确逻辑：拉流源应为物理机地址，注册后产出 zlm 内部地址。
-        
-        # 为了防错，如果 url 里已经包含 zlm:554，说明这是内部地址，不能用它去要求 ZLM 拉流！
-        # 需要找回真实的物理地址。
         rtsp_source = cam_info.get("source_url")
         if not rtsp_source:
             # 兼容处理：尝试从 config 原始数据里捞
@@ -357,7 +353,9 @@ def register_cameras_to_zlm():
         if not enabled:
             continue
             
-        api_url = f"http://127.0.0.1:{ZLM_HTTP_PORT}/index/api/addStreamProxy"
+        # 注意：这里调用的是宿主机或者 Docker 内部网络名
+        # 因为我们是在 docker-compose 里跑的，所以使用容器名 `zlm` 作为 HTTP 地址，而不是 127.0.0.1
+        api_url = f"http://zlm:80/index/api/addStreamProxy"
         params = {
             "secret": ZLM_API_SECRET,
             "vhost": "__defaultVhost__",
@@ -377,11 +375,11 @@ def register_cameras_to_zlm():
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
                 if res_data.get("code") == 0:
-                    print(f"[{cam_id}] ZLM Proxy configured. Live at rtsp://<IP>:{ZLM_RTSP_PORT}/live/{cam_id}")
+                    print(f"[{cam_id}] ZLM Proxy configured. Live at rtsp://zlm:554/live/{cam_id}")
                 else:
                     print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}")
         except Exception as e:
-            print(f"[{cam_id}] Could not connect to ZLM API: {e}")
+            print(f"[{cam_id}] Could not connect to ZLM API ({api_url}): {e}")
 
 # --- Main Entry Point ---
 if __name__ == "__main__":
