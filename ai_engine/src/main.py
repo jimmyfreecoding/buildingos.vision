@@ -94,17 +94,24 @@ presence_machines = {} # 存储每个摄像头的 Presence 状态机
 smoking_machines = {}  # 存储每个摄像头的 Smoking 状态机
 mqtt_cooldowns = {}    # MQTT 发送冷却时间戳 (去重键)
 
+# 全局模型占位符 (延迟加载)
+pose_model = None
+smoking_model = None
+
 # --- Init TensorRT Engines ---
-print("Initializing TensorRT Models (yolo_infer)...")
-try:
-    pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
-    smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
-    print("Models loaded successfully.")
-except Exception as e:
-    print(f"Failed to load TensorRT engines: {e}")
-    print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
-    pose_model = None
-    smoking_model = None
+def init_tensorrt_models():
+    global pose_model, smoking_model
+    if pose_model is not None and smoking_model is not None:
+        return
+        
+    print("Initializing TensorRT Models (yolo_infer)...")
+    try:
+        pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
+        smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
+        print("Models loaded successfully.")
+    except Exception as e:
+        print(f"Failed to load TensorRT engines: {e}")
+        print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
 
 # --- MQTT Setup ---
 MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
@@ -259,13 +266,23 @@ def process_camera(cam_id, cam_info):
                 
                 # 读取一帧 (抛弃缓存中堆积的旧帧，获取最新)
                 # cv2.CAP_PROP_BUFFERSIZE = 1 在某些后端无效，我们连读几帧清空 buffer
-                for _ in range(3): 
-                    ret, frame = cap.read()
+                try:
+                    for _ in range(3): 
+                        ret, frame = cap.read()
+                except Exception as e:
+                    print(f"[{cam_id}] cap.read() 崩溃: {e}")
+                    ret = False
+                    frame = None
                 
                 if not ret or frame is None:
                     print(f"[{cam_id}] 读取视频流失败，准备重连...")
                     cap.release()
                     continue
+                
+                # --- 延迟加载模型 ---
+                # 在确保流能读出第一帧之后，才去初始化 TensorRT 模型
+                # 避免 OpenCV 的 GStreamer 初始化与 TensorRT C++ 引擎抢占底层内存指针导致 double free
+                init_tensorrt_models()
                 
                 # --- 1. Presence (人员存在) 综合判定流程 ---
                 if need_p_sample and pose_model:
