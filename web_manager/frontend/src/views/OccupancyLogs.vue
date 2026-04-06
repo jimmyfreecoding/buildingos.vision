@@ -202,20 +202,38 @@ const displayDays = computed(() => {
   const areaLogs = allLogs.value.filter(log => log.areaCode === selectedArea.value)
 
   datesToDisplay.forEach(dateStr => {
-    // 匹配特定日期的日志
+    // 根据 dateStr 获取该日期的边界，过滤掉未来的时间点
+    const todayStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
+    const isToday = dateStr === todayStr
+    const currentHour = new Date().getHours()
+    const currentMin = new Date().getMinutes()
+
+    // 匹配特定日期的日志 (使用 log.date 而非 log.timestamp 解析，避免跨时区导致日期漂移)
     const dayLogs = areaLogs.filter(log => log.date === dateStr)
     
-    // 如果查询的是特定的日期段，或者有数据，或者是默认的最近8天，都展示该日期的图
     if (dayLogs.length > 0 || datesToDisplay.length <= 8) {
-      // 初始化 24(列) x 6(行) 的网格，代表 24小时，每小时6个10分钟窗口
       const grid = Array.from({ length: 24 }, () => Array.from({ length: 6 }, () => []))
       
       dayLogs.forEach(log => {
         if (!log.timestamp) return
-        const d = new Date(log.timestamp)
+        
+        // 修复：解析ISO字符串时，确保时区一致。如果是本地记录的timestamp且没有带Z，
+        // 解析出来可能会因为浏览器本地时区有偏差。
+        // 为了安全，如果timestamp中没有T或者Z，可以假设它是本地时间
+        let d = new Date(log.timestamp)
+        // 如果后端返回的是 UTC (带 Z) 但你希望按照设备本地时间显示，需要确保时区
+        
         const hour = d.getHours()
         const min = d.getMinutes()
         const minIdx = Math.floor(min / 10)
+        
+        // 过滤掉超过当前时间点的未来数据 (可能是时区偏差导致的数据漂移)
+        if (isToday) {
+            if (hour > currentHour || (hour === currentHour && min > currentMin)) {
+                return // 跳过未来的记录
+            }
+        }
+
         if (hour >= 0 && hour < 24 && minIdx >= 0 && minIdx < 6) {
           grid[hour][minIdx].push(log)
         }
@@ -306,16 +324,12 @@ onMounted(() => {
 
 <style scoped>
 .heatmap-card {
-  background-color: #0d1117;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
   min-height: 800px;
 }
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #c9d1d9;
   font-weight: bold;
 }
 .filter-section {
@@ -323,14 +337,14 @@ onMounted(() => {
   align-items: center;
   margin-bottom: 30px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid #ebeef5;
 }
 .legend {
   display: flex;
   align-items: center;
   margin-left: auto;
   font-size: 12px;
-  color: #8b949e;
+  color: #606266;
 }
 .legend-colors {
   display: flex;
@@ -345,12 +359,12 @@ onMounted(() => {
   border-radius: 3px;
 }
 
-/* GitHub Dark Theme Heatmap Colors */
-.color-level-0 { background-color: #161b22; outline: 1px solid rgba(255, 255, 255, 0.05); outline-offset: -1px; }
-.color-level-1 { background-color: #0e4429; }
-.color-level-2 { background-color: #006d32; }
-.color-level-3 { background-color: #26a641; }
-.color-level-4 { background-color: #39d353; }
+/* GitHub Light Theme Heatmap Colors */
+.color-level-0 { background-color: #ebedf0; }
+.color-level-1 { background-color: #9be9a8; }
+.color-level-2 { background-color: #40c463; }
+.color-level-3 { background-color: #30a14e; }
+.color-level-4 { background-color: #216e39; }
 
 .heatmaps-wrapper {
   display: flex;
@@ -364,7 +378,7 @@ onMounted(() => {
 .day-title {
   margin: 0 0 10px 45px;
   font-size: 14px;
-  color: #c9d1d9;
+  color: #303133;
   font-weight: 500;
 }
 .heatmap-container {
@@ -375,13 +389,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-around;
-  height: 114px; /* 6 * 15px + 5 gaps (4px) = 90 + 20 = 110px. approx 114px */
+  height: 114px;
   margin-right: 15px;
-  padding-bottom: 20px; /* Offset for X-axis */
+  padding-bottom: 20px;
 }
 .y-label {
   font-size: 12px;
-  color: #8b949e;
+  color: #909399;
   line-height: 15px;
   text-align: right;
   width: 30px;
@@ -409,7 +423,7 @@ onMounted(() => {
 .cell:hover {
   transform: scale(1.3);
   z-index: 10;
-  box-shadow: 0 0 6px rgba(0,0,0,0.8);
+  box-shadow: 0 0 6px rgba(0,0,0,0.2);
 }
 .x-axis {
   display: flex;
@@ -419,12 +433,11 @@ onMounted(() => {
 .x-label {
   width: 15px;
   font-size: 11px;
-  color: #8b949e;
+  color: #909399;
   text-align: left;
   overflow: visible;
   white-space: nowrap;
 }
-/* Hide odd hour labels for cleaner look to prevent overlapping */
 .x-label:nth-child(odd) {
   opacity: 0;
 }
@@ -432,9 +445,6 @@ onMounted(() => {
 /* Dialog inner styles */
 .log-detail-card {
   margin-bottom: 5px;
-  background-color: #161b22;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
 }
 .log-header {
   display: flex;
@@ -448,10 +458,7 @@ onMounted(() => {
   width: 100%;
   height: 200px;
   border-radius: 4px;
-  background-color: #000;
-  border: 1px solid #30363d;
-}
-:deep(.el-timeline-item__timestamp) {
-  color: #8b949e;
+  background-color: #f5f7fa;
+  border: 1px solid #ebeef5;
 }
 </style>
