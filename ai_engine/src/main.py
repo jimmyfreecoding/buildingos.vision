@@ -300,8 +300,11 @@ def process_camera(cam_id, cam_info):
                         # 构造 Gemma Prompt
                         prompt = "这幅办公场景图像中，是否有真实的、活着的人？请回答 YES 或 NO。"
                         
+                        # 为了防止 cv2 在多个线程间争抢内存引发 corrupted size vs. prev_size，必须复制一份独立的内存
+                        frame_copy = frame.copy()
+                        
                         # 提交复核 (阻塞等待)
-                        gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", frame, prompt, yolo_conf=max_conf)
+                        gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", frame_copy, prompt, yolo_conf=max_conf)
                         
                         if gemma_res == "YES":
                             has_person = True
@@ -342,7 +345,8 @@ def process_camera(cam_id, cam_info):
                         max_conf = max([b['conf'] for b in boxes])
                         prompt = "这幅图像中，是否有人正在抽烟？(包括拿着烟、嘴里叼着烟、吐烟圈)。请排除吃东西、喝水、拿笔或托腮等动作。请回答 YES 或 NO。"
                         
-                        gemma_res = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", frame, prompt, yolo_conf=max_conf)
+                        frame_copy = frame.copy()
+                        gemma_res = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", frame_copy, prompt, yolo_conf=max_conf)
                         
                         if gemma_res == "YES":
                             # Gemma 确认吸烟
