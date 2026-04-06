@@ -37,7 +37,8 @@ def get_unified_cameras(cfg):
         cam_id = cam.get("id")
         if not cam_id: continue
         cameras[cam_id] = {
-            "url": cam.get("url") or cam.get("source_url"),
+            "source_url": cam.get("source_url"),
+            "url": cam.get("url"), # 这是内部 zlm 的代理地址
             "areaCode": cam.get("areaCode", "UNKNOWN"),
             "enabled": True,
             "tasks": ["presence"]
@@ -53,7 +54,8 @@ def get_unified_cameras(cfg):
                 cameras[cam_id]["areaCode"] = cam.get("areaCode", "UNKNOWN")
         else:
             cameras[cam_id] = {
-                "url": cam.get("url") or cam.get("source_url"),
+                "source_url": cam.get("source_url"),
+                "url": cam.get("url"), # 这是内部 zlm 的代理地址
                 "areaCode": cam.get("areaCode", "UNKNOWN"),
                 "enabled": True,
                 "tasks": ["smoking"]
@@ -329,10 +331,30 @@ def register_cameras_to_zlm():
     print("Waiting for ZLMediaKit to start...")
     time.sleep(5) # 给 ZLM 留出启动时间
     for cam_id, cam_info in camera_config.items():
-        rtsp_url = cam_info.get("url")
+        # 这里必须使用摄像头的原始 RTSP 物理地址注册到 ZLM 中
+        # 旧版可能存为 'source_url'，统一解析后的结构可能在不同地方，所以优先取 source_url，如果没有再取 url
+        # 补充：在 get_unified_cameras 中，我们把物理地址塞到了 'url' 里，但这会导致 ZLM 循环代理。
+        # 正确逻辑：拉流源应为物理机地址，注册后产出 zlm 内部地址。
+        
+        # 为了防错，如果 url 里已经包含 zlm:554，说明这是内部地址，不能用它去要求 ZLM 拉流！
+        # 需要找回真实的物理地址。
+        rtsp_source = cam_info.get("source_url")
+        if not rtsp_source:
+            # 兼容处理：尝试从 config 原始数据里捞
+            for stream_type in ["smoking", "occupancy"]:
+                for stream in config.get("streams", {}).get(stream_type, []):
+                    if stream.get("id") == cam_id:
+                        rtsp_source = stream.get("source_url")
+                        break
+                if rtsp_source: break
+        
+        if not rtsp_source:
+            print(f"[{cam_id}] Cannot find physical source_url for ZLM proxy. Skipping.")
+            continue
+            
         enabled = cam_info.get("enabled", True)
         
-        if not enabled or not rtsp_url:
+        if not enabled:
             continue
             
         api_url = f"http://127.0.0.1:{ZLM_HTTP_PORT}/index/api/addStreamProxy"
@@ -341,7 +363,7 @@ def register_cameras_to_zlm():
             "vhost": "__defaultVhost__",
             "app": "live",
             "stream": cam_id,
-            "url": rtsp_url,
+            "url": rtsp_source,
             "enable_rtmp": 1,
             "enable_rtsp": 1,
             "enable_hls": 1,
