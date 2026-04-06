@@ -1,6 +1,10 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import threading
+
+# 全局推理锁，防止多线程同时调用 TensorRT 引擎导致 double free
+trt_infer_lock = threading.Lock()
 
 class YoloTensorRTEngine:
     """
@@ -24,8 +28,9 @@ class YoloTensorRTEngine:
         if img is None:
             return []
             
-        # verbose=False 减少日志刷屏
-        results = self.model(img, conf=self.conf_thres, iou=self.iou_thres, verbose=False)
+        with trt_infer_lock:
+            # verbose=False 减少日志刷屏
+            results = self.model(img, conf=self.conf_thres, iou=self.iou_thres, verbose=False)
         
         parsed_results = []
         for r in results:
