@@ -243,7 +243,9 @@ def process_camera(cam_id, cam_info):
             if need_p_sample or need_s_sample:
                 # 如果连接断开，尝试重连
                 if not cap.isOpened():
-                    cap.open(rtsp_url, cv2.CAP_FFMPEG) # 强制使用 FFMPEG 后端，避免 GStreamer 报错
+                    # 取消硬编码 cv2.CAP_FFMPEG 后端。
+                    # l4t-ml OpenCV 版本支持 GStreamer，FFMPEG在处理网络流名字时可能会报错 "can't be used to capture by name"
+                    cap.open(rtsp_url) 
                     if not cap.isOpened():
                         print(f"[{cam_id}] 无法连接到视频流: {rtsp_url}")
                         time.sleep(5)
