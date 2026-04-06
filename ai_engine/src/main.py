@@ -98,20 +98,25 @@ mqtt_cooldowns = {}    # MQTT 发送冷却时间戳 (去重键)
 pose_model = None
 smoking_model = None
 
+# 确保 TensorRT 初始化的锁，防止多个摄像头线程同时触发初始化
+trt_init_lock = threading.Lock()
+
 # --- Init TensorRT Engines ---
 def init_tensorrt_models():
     global pose_model, smoking_model
-    if pose_model is not None and smoking_model is not None:
-        return
-        
-    print("Initializing TensorRT Models (yolo_infer)...")
-    try:
-        pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
-        smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
-        print("Models loaded successfully.")
-    except Exception as e:
-        print(f"Failed to load TensorRT engines: {e}")
-        print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
+    
+    with trt_init_lock:
+        if pose_model is not None and smoking_model is not None:
+            return
+            
+        print("Initializing TensorRT Models (yolo_infer)...")
+        try:
+            pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
+            smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
+            print("Models loaded successfully.")
+        except Exception as e:
+            print(f"Failed to load TensorRT engines: {e}")
+            print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
 
 # --- MQTT Setup ---
 MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
@@ -437,6 +442,13 @@ if __name__ == "__main__":
     # 注册 ZLM 代理 (项目核心记忆: 动态拉流)
     zlm_thread = threading.Thread(target=register_cameras_to_zlm)
     zlm_thread.start()
+
+    # 重点：为了彻底消除多线程并发初始化导致的 double free，
+    # 我们在主线程中先行预热初始化 TensorRT，然后再开启各个摄像头的处理线程。
+    # 这样所有的 OpenCV GStreamer 实例化都会发生在模型加载完毕之后，避免内存抢占。
+    # 由于需要连接视频流，这里我们可以做个短暂的等待，或者直接在主线程加载。
+    print("Pre-loading TensorRT Engines sequentially in main thread...")
+    init_tensorrt_models()
 
     # 启动摄像头定时采样线程
     threads = []
