@@ -12,6 +12,12 @@ zlm/www/captures/
 ai_engine/models/dataset/
 ai_engine/models/train/
 
+# Ignore compiled script generated on edge
+ai_engine/export_engine.py
+
+# Ignore dynamic configuration
+ai_engine/config/config.json
+
 # Python
 __pycache__/
 *.pyc

@@ -15,8 +15,25 @@ from gemma_queue import gemma_queue
 
 # --- Load Configuration ---
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/app/ai_engine/config/config.json")
+DEFAULT_CONFIG_PATH = "/app/ai_engine/config/config.default.json"
 
 def load_config():
+    # --- 自动初始化配置文件机制 ---
+    if not os.path.exists(CONFIG_PATH):
+        print(f"Warning: {CONFIG_PATH} not found. Initializing from default config...")
+        try:
+            import shutil
+            if os.path.exists(DEFAULT_CONFIG_PATH):
+                shutil.copy(DEFAULT_CONFIG_PATH, CONFIG_PATH)
+                print(f"Successfully copied {DEFAULT_CONFIG_PATH} to {CONFIG_PATH}")
+            else:
+                # 连 default 都找不到时的保底方案
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump({"streams": {"occupancy": [], "smoking": []}}, f, indent=4)
+                print(f"Created empty config at {CONFIG_PATH}")
+        except Exception as e:
+            print(f"Error initializing config file: {e}")
+            
     try:
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)
@@ -68,8 +85,9 @@ camera_config = get_unified_cameras(config)
 ai_config = config.get("ai_engine", {})
 ZLM_HTTP_PORT = ai_config.get("zlm_http_port", 10081)
 ZLM_RTSP_PORT = ai_config.get("zlm_rtsp_port", 10554)
-# 从环境变量获取 API Secret (动态注入)，如果不存在则使用配置文件中的 secret
-ZLM_API_SECRET = os.getenv("ZLM_API_SECRET", ai_config.get("zlm_api_secret", "035c73f7-bb6b-4889-a715-d9eb2d1925cc"))
+
+# 从环境变量获取 API Secret，ZLM_API_SECRET 已经在 docker-compose 中统一定义
+ZLM_API_SECRET = os.getenv("ZLM_API_SECRET", "buildingos_edge_secret_2026")
 
 # --- Global Dictionaries ---
 presence_machines = {} # 存储每个摄像头的 Presence 状态机
@@ -205,7 +223,9 @@ def process_camera(cam_id, cam_info):
     last_s_time = 0
 
     # 尝试连接视频流
-    cap = cv2.VideoCapture(rtsp_url)
+    # 我们应该等 ZLM 代理配置生效后再去连接，否则一启动马上连接会报 404
+    # 在主循环里处理连接
+    cap = cv2.VideoCapture()
     
     while True:
         try:
@@ -223,7 +243,7 @@ def process_camera(cam_id, cam_info):
             if need_p_sample or need_s_sample:
                 # 如果连接断开，尝试重连
                 if not cap.isOpened():
-                    cap.open(rtsp_url)
+                    cap.open(rtsp_url, cv2.CAP_FFMPEG) # 强制使用 FFMPEG 后端，避免 GStreamer 报错
                     if not cap.isOpened():
                         print(f"[{cam_id}] 无法连接到视频流: {rtsp_url}")
                         time.sleep(5)

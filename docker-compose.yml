@@ -12,12 +12,13 @@ services:
       # 通过环境变量设置 ZLM 的全局秘钥
       - ZLM_API_SECRET=buildingos_edge_secret_2026
     # 启动前通过 sed 自动将环境变量中的密钥同步到 config.ini 中，实现零接触配置
+    # 注意：因为我们将宿主机的文件挂载为了只读文件或者受宿主机权限保护，所以这里将其复制一份到临时目录修改并使用
     command: >
-      sh -c "sed 's/^secret=.*/secret='\"$$ZLM_API_SECRET\"'/g' /opt/media/conf/config.ini > /tmp/config.ini && cat /tmp/config.ini > /opt/media/conf/config.ini && /opt/media/bin/MediaServer -c /opt/media/conf/config.ini"
+      sh -c "cp /opt/media/conf/config.ini /tmp/config.ini && sed -i 's/^secret=.*/secret='\"$$ZLM_API_SECRET\"'/g' /tmp/config.ini && /opt/media/bin/MediaServer -c /tmp/config.ini"
     volumes:
       - zlm_www_data:/opt/media/www/
-      # 映射配置文件以便持久化和自动修改
-      - ./zlm/config.ini:/opt/media/conf/config.ini
+      # 挂载配置目录而不是单一文件，防止 sed 修改文件 inode 导致 docker 挂载断裂
+      - ./zlm:/opt/media/conf
     restart: always
 
   # 前端请求代理网关 (Nginx) - 用于托管 Web 界面并代理 /api
@@ -59,8 +60,8 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       # MQTT_BROKER 移除硬编码，优先使用 config.json 中的配置
       - ZLM_API=http://zlm:80/index/api
-      # 让 AI 引擎读取相同的秘钥环境变量
-      - ZLM_SECRET=buildingos_edge_secret_2026
+      # 统一使用 ZLM_API_SECRET 环境变量
+      - ZLM_API_SECRET=buildingos_edge_secret_2026
     extra_hosts:
       - "emqx:host-gateway"
     volumes:
@@ -90,6 +91,9 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    environment:
+      # 统一使用 ZLM_API_SECRET 环境变量
+      - ZLM_API_SECRET=buildingos_edge_secret_2026
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # 允许控制重启容器
       - ./:/host_project                            # 允许执行 git pull / compose 操作

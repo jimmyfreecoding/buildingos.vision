@@ -24,7 +24,26 @@ app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
 // Docker 容器内的挂载路径
 const CONFIG_PATH = '/app/ai_engine/config/config.json';
+const DEFAULT_CONFIG_PATH = '/app/ai_engine/config/config.default.json';
 const PROJECT_DIR = '/host_project';
+
+// --- 自动初始化配置文件机制 ---
+if (!fs.existsSync(CONFIG_PATH)) {
+    console.log(`Warning: ${CONFIG_PATH} not found. Initializing from default config...`);
+    try {
+        if (fs.existsSync(DEFAULT_CONFIG_PATH)) {
+            fs.copyFileSync(DEFAULT_CONFIG_PATH, CONFIG_PATH);
+            console.log(`Successfully copied ${DEFAULT_CONFIG_PATH} to ${CONFIG_PATH}`);
+        } else {
+            // 保底方案
+            const emptyConfig = { streams: { occupancy: [], smoking: [] } };
+            fs.writeFileSync(CONFIG_PATH, JSON.stringify(emptyConfig, null, 4), 'utf8');
+            console.log(`Created empty config at ${CONFIG_PATH}`);
+        }
+    } catch (e) {
+        console.error(`Error initializing config file: ${e.message}`);
+    }
+}
 
 // Real-time AI Logs via Docker logs
 let logProcess = null;
@@ -154,7 +173,7 @@ app.get('/api/system/info', (req, res) => {
 app.get('/api/zlm/metrics', (req, res) => {
     try {
         const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : {};
-        const zlmSecret = config.zlm?.secret || "buildingos_edge_secret_2026";
+        const zlmSecret = process.env.ZLM_API_SECRET || config.zlm?.secret || "buildingos_edge_secret_2026";
         const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
         
         http.get(getMediaListUrl, (zlmRes) => {
@@ -283,7 +302,7 @@ app.post('/api/config', (req, res) => {
         ];
         
         const newStreamIds = new Set(newStreams.map(s => s.id));
-        const zlmSecret = newConfig.zlm?.secret || "buildingos_edge_secret_2026";
+        const zlmSecret = process.env.ZLM_API_SECRET || newConfig.zlm?.secret || "buildingos_edge_secret_2026";
         
         // --- Full Synchronization with ZLM ---
         // Query ZLM for ALL currently active streams, and if any stream in ZLM
