@@ -46,11 +46,11 @@
                 <el-progress type="dashboard" :percentage="sysInfo.gpu.util" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">GPU (TensorRT)</span>
+                    <span class="percentage-label">GPU (计算负载)</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">Mem: {{ sysInfo.gpu.memUsed.toFixed(0) }}MB / {{ sysInfo.gpu.memTotal.toFixed(0) }}MB</div>
-                <div class="metric-note">高利用率 + 频率下降通常是热/功耗限制</div>
+                <div class="metric-note">0% 常见于空闲时段；高利用率 + 频率下降通常是热/功耗限制</div>
               </el-col>
             </el-row>
             
@@ -60,7 +60,7 @@
             <el-descriptions :column="2" border size="small">
               <el-descriptions-item label="Power (整机功耗)">
                 <el-tag size="small" type="warning" effect="plain">{{ (sysInfo.power.total / 1000).toFixed(1) }} W</el-tag>
-                <span style="font-size: 12px; color: #909399; margin-left: 5px;">(GPU: {{ (sysInfo.power.gpu / 1000).toFixed(1) }} W)</span>
+                <span style="font-size: 12px; color: #909399; margin-left: 5px;">(CPU+GPU+CV: {{ (powerComputeRail / 1000).toFixed(1) }} W)</span>
               </el-descriptions-item>
               <el-descriptions-item label="Temperatures">
                 <span style="font-size: 12px;">
@@ -99,6 +99,7 @@
                 </el-tag>
               </div>
               <div class="engine-note">用于判断视频链路是否抢占资源：NVDEC/NVENC/VIC 持续高占用时，本地大模型响应会变慢。</div>
+              <div v-if="isEngineAllIdle" class="engine-idle-note">当前全部为 0% 表示各硬件引擎处于空闲状态，并非故障。</div>
             </el-card>
           </div>
         </el-card>
@@ -311,6 +312,17 @@ const engineEntries = computed(() => {
     name,
     value: typeof value === 'number' ? value : (value ? 100 : 0)
   }))
+})
+
+const isEngineAllIdle = computed(() => {
+  if (engineEntries.value.length === 0) return true
+  return engineEntries.value.every(item => (item.value || 0) <= 0)
+})
+
+const powerComputeRail = computed(() => {
+  const power = sysInfo.value.power || {}
+  const rail = power.cpu_gpu_cv || 0
+  return rail > 0 ? rail : (power.gpu || 0)
 })
 
 const getTempByKeys = (keys) => {
@@ -530,6 +542,11 @@ onBeforeUnmount(() => {
   margin-top: 8px;
   font-size: 12px;
   color: #909399;
+}
+.engine-idle-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #67c23a;
 }
 .status-dot {
   width: 8px;
