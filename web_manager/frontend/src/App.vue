@@ -21,7 +21,7 @@
         </el-menu-item>
         <el-menu-item index="/cameras">
           <el-icon><VideoCamera /></el-icon>
-          <span>流媒体配置</span>
+          <span>场景摄像头配置</span>
         </el-menu-item>
         <el-menu-item index="/ai-params">
           <el-icon><Setting /></el-icon>
@@ -29,7 +29,7 @@
         </el-menu-item>
         <el-menu-item index="/occupancy-logs">
           <el-icon><Document /></el-icon>
-          <span>人存在算法观测</span>
+          <span>场景检测结果</span>
         </el-menu-item>
         <el-menu-item index="/network">
           <el-icon><Connection /></el-icon>
