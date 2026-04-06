@@ -77,16 +77,17 @@ class PresenceStateMachine:
                 if self.has_person_in_window:
                     final_status = "occupied"
                 else:
-                    # 状态迁移: WINDOW_TRACKING -> CONFIRM_EMPTY
-                    self.state = "CONFIRM_EMPTY"
                     final_status = "empty"
                 
                 event_triggered = True
                 
                 print(f"[{self.camera_id}] Presence: 窗口结束. 结果={final_status}")
                 
-                # 重置为 IDLE，等待下一轮采样
-                self.state = "IDLE"
+                # 重置状态并立即开启下一个窗口，确保连续性
+                self.state = "WINDOW_TRACKING"
+                self.window_start_time = now
+                self.has_person_in_window = False
+                self.window_period_type, self.window_duration = self._get_current_period()
                 
             return event_triggered, final_status, self.window_duration // 60, self.window_period_type
 

@@ -62,8 +62,10 @@ services:
       - ZLM_API=http://zlm:80/index/api
       # 统一使用 ZLM_API_SECRET 环境变量
       - ZLM_API_SECRET=buildingos_edge_secret_2026
-      # 修复 Ultralytics 配置目录不可写警告
+      # 修复 Ultralytics 配置目录不可写警告，挂载到统一缓存或直接使用容器内 /tmp
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      # 为了支持更深层的嵌套权限，使用临时根目录作为缓存
+      - XDG_CONFIG_HOME=/tmp
     extra_hosts:
       - "emqx:host-gateway"
       - "host.docker.internal:host-gateway"

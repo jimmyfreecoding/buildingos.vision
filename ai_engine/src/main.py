@@ -124,6 +124,7 @@ try:
     print("MQTT Connected.")
 except Exception as e:
     print(f"Error connecting to MQTT: {e}")
+    print("WARNING: MQTT connection failed, but AI Engine will continue to run without publishing events.")
 
 def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
     """带冷却去重机制的 MQTT 发布，同时持久化到本地日志供 Web 查阅"""
