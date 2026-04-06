@@ -66,11 +66,15 @@ services:
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
       # 为了支持更深层的嵌套权限，使用临时根目录作为缓存
       - XDG_CONFIG_HOME=/tmp
+      # 同步宿主机时区到容器内 (Houston Time)
+      - TZ=America/Chicago
     extra_hosts:
       - "emqx:host-gateway"
       - "host.docker.internal:host-gateway"
       - "buildingos-emqx-prod:host-gateway"
     volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
       - ./ai_engine/models:/app/models
       # 移除写死的旧配置挂载路径，保持全局统一
       - ./ai_engine/config:/app/ai_engine/config
