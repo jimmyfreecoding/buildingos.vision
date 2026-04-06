@@ -318,9 +318,9 @@ flowchart TD
 ### 12.2 底层推理引擎 (`yolo_infer.py`)
 **定位**：极速、轻量的一级召回驱动。
 **核心机制**：
-- **纯 TensorRT + PyCUDA**：移除了庞大的 PyTorch 和 Ultralytics 依赖库。直接通过 TensorRT Python API 加载 `.engine` 模型。
-- **异步显存流**：利用 PyCUDA 的 `cuda.Stream()` 实现 Host-to-Device 和 Device-to-Host 的异步内存拷贝，极大提升了推理吞吐量。
-- **原生后处理**：内置了高效的 LetterBox 预处理与 NMS (非极大值抑制) 逻辑，确保输出标准的候选框。
+- **原生 Ultralytics 引擎加载**：为解决 YOLOv8 导出 `.engine` 时头部附加 JSON metadata 导致底层 C++ API 报错 `magicTag failed` 的问题，系统采用了 Ultralytics 原生的 `YOLO(engine_path, task=...)` 加载方式。
+- **TensorRT 硬件加速**：虽然使用了 Ultralytics 顶层封装，但底层依然会自动调用 TensorRT 进行 GPU 满血加速推理，兼顾了极高的开发鲁棒性与推理性能。
+- **动态结果解析**：内置了针对检测（Detect）和姿态（Pose）两种模型输出结构的统一解析逻辑，向上层屏蔽了底层张量维度的差异。
 
 ### 12.3 状态机业务大脑 (`state_machine.py`)
 **定位**：时间窗口与时段策略的落地实现。
