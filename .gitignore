@@ -31,3 +31,5 @@ web_manager/**/node_modules/
 web_manager/frontend/dist/
 node_modules/
 model/
+
+ai_engine.Path/
