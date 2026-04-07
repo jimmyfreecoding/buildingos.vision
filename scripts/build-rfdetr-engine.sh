@@ -14,6 +14,9 @@ OPT_LEVEL="${OPT_LEVEL:-2}"
 SKIP_INFERENCE="${SKIP_INFERENCE:-1}"
 USE_TIMING_CACHE="${USE_TIMING_CACHE:-0}"
 TIMING_CACHE_FILE="${TIMING_CACHE_FILE:-/tmp/rfdetr_timing.cache}"
+MAX_AUX_STREAMS="${MAX_AUX_STREAMS:-0}"
+ALLOCATION_STRATEGY="${ALLOCATION_STRATEGY:-runtime}"
+ENABLE_PREVIEW_PROFILE_SHARING="${ENABLE_PREVIEW_PROFILE_SHARING:-1}"
 
 if [[ -x "/usr/src/tensorrt/bin/trtexec" ]]; then
   TRTEXEC="/usr/src/tensorrt/bin/trtexec"
@@ -31,6 +34,8 @@ fi
 
 mkdir -p "$(dirname "$ENGINE_PATH")"
 
+TRTEXEC_HELP="$("$TRTEXEC" --help 2>&1 || true)"
+
 COMMON_ARGS=(
   "--onnx=$ONNX_PATH"
   "--saveEngine=$ENGINE_PATH"
@@ -40,6 +45,18 @@ COMMON_ARGS=(
 
 if [[ "$USE_TIMING_CACHE" == "1" ]]; then
   COMMON_ARGS+=("--timingCacheFile=$TIMING_CACHE_FILE")
+fi
+
+if echo "$TRTEXEC_HELP" | grep -q -- "--maxAuxStreams"; then
+  COMMON_ARGS+=("--maxAuxStreams=$MAX_AUX_STREAMS")
+fi
+
+if echo "$TRTEXEC_HELP" | grep -q -- "--allocationStrategy"; then
+  COMMON_ARGS+=("--allocationStrategy=$ALLOCATION_STRATEGY")
+fi
+
+if [[ "$ENABLE_PREVIEW_PROFILE_SHARING" == "1" ]] && echo "$TRTEXEC_HELP" | grep -q -- "--preview"; then
+  COMMON_ARGS+=("--preview=+profileSharing0806")
 fi
 
 if [[ "${BUILD_MODE,,}" == "dynamic" ]]; then

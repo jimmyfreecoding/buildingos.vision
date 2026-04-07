@@ -52,6 +52,12 @@ python scripts/export-rfdetr-onnx.py --variant medium --size 640x640 --conf 0.25
 docker compose exec ai-engine bash -lc "bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
 ```
 
+TensorRT 10.x 建议参数（脚本默认已启用）：
+
+- `MAX_AUX_STREAMS=0`
+- `ALLOCATION_STRATEGY=runtime`
+- `ENABLE_PREVIEW_PROFILE_SHARING=1`（仅在当前 trtexec 支持 `--preview` 时自动生效）
+
 默认 shape 已按 RF-DETR 设置为：
 
 - `MIN_SHAPE=1x3x640x640`
