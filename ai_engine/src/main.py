@@ -167,14 +167,17 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
         # 写入图片
         image_paths = []
         timestamp_ms = int(time.time() * 1000)
-        if images and isinstance(images, list):
+        
+        # 修复 numpy truth value ambiguous 报错: 不要直接使用 `if images:`
+        if isinstance(images, list) and len(images) > 0:
             for i, img in enumerate(images):
-                img_name = f"{cam_id}_sample_{timestamp_ms}_{i}.jpg"
-                img_path = os.path.join(target_dir, img_name)
-                cv2.imwrite(img_path, img)
-                rel_path = f"occupancy_logs/{today_str}/{safe_area}/{img_name}"
-                image_paths.append(rel_path)
-        elif images is not None:
+                if img is not None:
+                    img_name = f"{cam_id}_sample_{timestamp_ms}_{i}.jpg"
+                    img_path = os.path.join(target_dir, img_name)
+                    cv2.imwrite(img_path, img)
+                    rel_path = f"occupancy_logs/{today_str}/{safe_area}/{img_name}"
+                    image_paths.append(rel_path)
+        elif images is not None: # 直接用 is not None 检查 numpy array
             img_name = f"{cam_id}_sample_{timestamp_ms}.jpg"
             img_path = os.path.join(target_dir, img_name)
             cv2.imwrite(img_path, images)
