@@ -22,8 +22,22 @@
         @change="handleFilterChange"
         style="width: 300px; margin-right: 15px;"
       />
+      
+      <!-- Auto refresh switch -->
+      <el-switch
+        v-model="autoRefresh"
+        active-text="自动刷新 (1m)"
+        inactive-text="关闭刷新"
+        @change="toggleAutoRefresh"
+        style="margin-right: 15px;"
+      />
+
       <div class="legend">
-        <span>无人</span>
+        <span style="margin-right: 10px;">无记录</span>
+        <ul class="legend-colors">
+          <li class="color-level-null"></li>
+        </ul>
+        <span style="margin-right: 10px;">无人</span>
         <ul class="legend-colors">
           <li class="color-level-0"></li>
           <li class="color-level-1"></li>
@@ -43,40 +57,45 @@
         <el-empty description="该时间段内暂无检测数据"></el-empty>
       </div>
       
-      <div v-else v-for="dayData in displayDays" :key="dayData.date" class="day-heatmap">
-        <h4 class="day-title">{{ dayData.date }}</h4>
-        <div class="heatmap-container">
-          <!-- Y-axis (Minutes): 50m at top, 0m at bottom -->
-          <div class="y-axis">
-            <div class="y-label" v-for="m in 6" :key="m">{{ (6 - m) * 10 }}m</div>
+      <!-- 左右两块布局，一行两天 -->
+      <el-row :gutter="40" v-else>
+        <el-col :span="12" v-for="dayData in displayDays" :key="dayData.date" style="margin-bottom: 40px;">
+          <div class="day-heatmap">
+            <h4 class="day-title">{{ dayData.date }}</h4>
+            <div class="heatmap-container">
+              <!-- Y-axis (Minutes): 50m at top, 0m at bottom -->
+              <div class="y-axis">
+                <div class="y-label" v-for="m in 6" :key="m">{{ (6 - m) * 10 }}m</div>
+              </div>
+              
+              <!-- Grid -->
+              <div class="grid-content">
+                 <div class="grid-columns">
+                    <div class="column" v-for="hour in 24" :key="hour">
+                       <!-- 反转 minuteIdx 渲染顺序，使 DOM 节点也自下而上排列 0m, 10m...50m -->
+                       <el-tooltip
+                          v-for="minuteIdx in 6" :key="minuteIdx"
+                          placement="top"
+                          :content="getTooltip(dayData, hour-1, 6 - minuteIdx)"
+                          :show-after="200"
+                       >
+                         <div 
+                            class="cell" 
+                            :class="getCellIntensityClass(dayData, hour-1, 6 - minuteIdx)"
+                            @click="openDetail(dayData, hour-1, 6 - minuteIdx)"
+                         ></div>
+                       </el-tooltip>
+                    </div>
+                 </div>
+                 <!-- X-axis (Hours) -->
+                 <div class="x-axis">
+                   <div class="x-label" v-for="hour in 24" :key="hour">{{ (hour - 1).toString().padStart(2, '0') }}:00</div>
+                 </div>
+              </div>
+            </div>
           </div>
-          
-          <!-- Grid -->
-          <div class="grid-content">
-             <div class="grid-columns">
-                <div class="column" v-for="hour in 24" :key="hour">
-                   <!-- 反转 minuteIdx 渲染顺序，使 DOM 节点也自下而上排列 0m, 10m...50m -->
-                   <el-tooltip
-                      v-for="minuteIdx in 6" :key="minuteIdx"
-                      placement="top"
-                      :content="getTooltip(dayData, hour-1, 6 - minuteIdx)"
-                      :show-after="200"
-                   >
-                     <div 
-                        class="cell" 
-                        :class="'color-level-' + getCellIntensity(dayData, hour-1, 6 - minuteIdx)"
-                        @click="openDetail(dayData, hour-1, 6 - minuteIdx)"
-                     ></div>
-                   </el-tooltip>
-                </div>
-             </div>
-             <!-- X-axis (Hours) -->
-             <div class="x-axis">
-               <div class="x-label" v-for="hour in 24" :key="hour">{{ (hour - 1).toString().padStart(2, '0') }}:00</div>
-             </div>
-          </div>
-        </div>
-      </div>
+        </el-col>
+      </el-row>
     </div>
 
     <!-- 详情弹窗 -->
@@ -170,6 +189,20 @@ const loading = ref(false)
 const allLogs = ref([])
 const selectedArea = ref('')
 const dateRange = ref([])
+const autoRefresh = ref(false)
+let refreshInterval = null
+
+const toggleAutoRefresh = (val) => {
+  if (val) {
+    refreshInterval = setInterval(() => {
+      fetchLogs(true)
+    }, 60000) // 每分钟刷新
+    ElMessage.success('已开启自动刷新 (1分钟)')
+  } else {
+    if (refreshInterval) clearInterval(refreshInterval)
+    ElMessage.info('已关闭自动刷新')
+  }
+}
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
@@ -192,8 +225,8 @@ const getDefaultDateRange = () => {
 
 const defaultDates = getDefaultDateRange()
 
-const fetchLogs = async () => {
-  loading.value = true
+const fetchLogs = async (silent = false) => {
+  if (!silent) loading.value = true
   try {
     const res = await axios.get('/api/occupancy/logs')
     allLogs.value = res.data || []
@@ -202,9 +235,9 @@ const fetchLogs = async () => {
       selectedArea.value = uniqueAreas.value[0]
     }
   } catch (e) {
-    ElMessage.error('获取日志失败')
+    if (!silent) ElMessage.error('获取日志失败')
   }
-  loading.value = false
+  if (!silent) loading.value = false
 }
 
 const uniqueAreas = computed(() => {
@@ -289,21 +322,20 @@ const getCellLogs = (dayData, hour, minuteIdx) => {
   return dayData.grid[hour][minuteIdx] || []
 }
 
-const getCellIntensity = (dayData, hour, minuteIdx) => {
+const getCellIntensityClass = (dayData, hour, minuteIdx) => {
   const logs = getCellLogs(dayData, hour, minuteIdx)
-  if (logs.length === 0) return 0
+  if (logs.length === 0) return 'color-level-null' // 无记录（比如未来时间，或者断网没收到记录），使用浅灰色背景
   
-  // 基于有人记录的数量决定绿色深浅
   const occupiedLogs = logs.filter(l => l.raw_payload?.result === 'occupied')
   if (occupiedLogs.length === 0) {
-    // 只有“无人”记录，显示浅色，或者也可以定为另一种颜色。GitHub Heatmap中我们用最低亮度的绿色表示少量活动
-    return 1 
+    return 'color-level-0' // 有日志但无人，使用稍微深一点点的灰色，或者更暗的灰色与无记录区分
   }
   
   const count = occupiedLogs.length
-  if (count === 1) return 2
-  if (count <= 3) return 3
-  return 4
+  if (count === 1) return 'color-level-1'
+  if (count === 2) return 'color-level-2'
+  if (count === 3) return 'color-level-3'
+  return 'color-level-4'
 }
 
 const getTooltip = (dayData, hour, minuteIdx) => {
@@ -424,7 +456,8 @@ onMounted(() => {
 }
 
 /* GitHub Light Theme Heatmap Colors */
-.color-level-0 { background-color: #ebedf0; }
+.color-level-null { background-color: #ebedf0; } /* 根本没日志（未来时间，断网等） */
+.color-level-0 { background-color: #d1d5da; }    /* 有判断日志，但是判定为无人 */
 .color-level-1 { background-color: #9be9a8; }
 .color-level-2 { background-color: #40c463; }
 .color-level-3 { background-color: #30a14e; }
