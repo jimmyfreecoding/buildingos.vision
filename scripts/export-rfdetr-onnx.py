@@ -3,6 +3,25 @@ import os
 import sys
 
 
+def register_custom_onnx_symbolics(opset: int):
+    try:
+        import torch
+        from torch.onnx import register_custom_op_symbolic
+        from torch.onnx.symbolic_opset11 import upsample_bicubic2d
+    except Exception:
+        return
+
+    def _upsample_bicubic2d_aa(g, *args):
+        if len(args) >= 5:
+            return upsample_bicubic2d(g, args[0], args[1], args[2], args[3], args[4])
+        return g.op("Identity", args[0])
+
+    try:
+        register_custom_op_symbolic("aten::_upsample_bicubic2d_aa", _upsample_bicubic2d_aa, opset)
+    except Exception:
+        pass
+
+
 def parse_size(size_text: str):
     parts = size_text.lower().replace("x", ",").split(",")
     parts = [p.strip() for p in parts if p.strip()]
@@ -38,6 +57,8 @@ def main():
         print("failed to import rfdetr, run: pip install \"rfdetr[onnx]\"")
         print(f"details: {e}")
         return 1
+
+    register_custom_onnx_symbolics(args.opset)
 
     variant_map = {
         "nano": RFDETRNano,
