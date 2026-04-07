@@ -15,6 +15,15 @@
 - `docker compose` 中 `ai-engine` 已挂载：
   - `./ai_engine/models:/app/models`
   - `./scripts:/app/scripts:ro`
+- `ai_engine` 镜像建议使用 `nvcr.io/nvidia/l4t-ml:r36.4.0-py3`（TensorRT 10.x）
+
+升级容器 TensorRT 版本：
+
+```bash
+docker compose build --no-cache ai-engine
+docker compose up -d --force-recreate ai-engine
+docker compose exec ai-engine bash -lc "/usr/src/tensorrt/bin/trtexec --version"
+```
 
 ## 3) 获取 ONNX（开发机执行）
 

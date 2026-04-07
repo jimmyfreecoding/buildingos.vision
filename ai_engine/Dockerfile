@@ -1,6 +1,7 @@
-# 使用适用于 JetPack 6.0 (Orin Nano) 的官方机器学习基础镜像
-# NVIDIA 在 JetPack 6.0 中调整了策略，推荐使用 l4t-ml 镜像作为底座
-FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3
+# 使用可配置的 JetPack 6.x 官方机器学习基础镜像
+# 默认提升到 r36.4.0（对应更新的 TensorRT 10.x 工具链）
+ARG L4T_ML_IMAGE=nvcr.io/nvidia/l4t-ml:r36.4.0-py3
+FROM ${L4T_ML_IMAGE}
 
 # 环境变量设置
 ENV DEBIAN_FRONTEND=noninteractive
