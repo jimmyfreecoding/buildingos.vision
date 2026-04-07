@@ -89,6 +89,9 @@ ZLM_RTSP_PORT = ai_config.get("zlm_rtsp_port", 10554)
 # 从环境变量获取 API Secret，ZLM_API_SECRET 已经在 docker-compose 中统一定义
 ZLM_API_SECRET = os.getenv("ZLM_API_SECRET", "buildingos_edge_secret_2026")
 
+def log_info(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
 # --- Global Dictionaries ---
 presence_machines = {} # 存储每个摄像头的 Presence 状态机
 smoking_machines = {}  # 存储每个摄像头的 Smoking 状态机
@@ -137,6 +140,69 @@ try:
 except Exception as e:
     print(f"Error connecting to MQTT: {e}")
     print("WARNING: MQTT connection failed, but AI Engine will continue to run without publishing events.")
+
+def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None):
+    """
+    不管是否触发 MQTT 报警，每一分钟（或每一个采样周期）都将原始判定结果
+    追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
+    """
+    try:
+        log_dir_base = config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs")
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        safe_area = str(area_code).replace('/', '_').replace('\\', '_')
+        target_dir = os.path.join(log_dir_base, today_str, safe_area)
+        os.makedirs(target_dir, exist_ok=True)
+
+        # 清理旧文件
+        files = [os.path.join(target_dir, f) for f in os.listdir(target_dir) if f.endswith('.json')]
+        files.sort(key=os.path.getmtime)
+        max_logs_per_day = config.get("storage_quota", {}).get("max_logs_per_day_per_area", 2000)
+        if len(files) > max_logs_per_day:
+            for f in files[:-max_logs_per_day]:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+
+        # 写入图片
+        image_paths = []
+        timestamp_ms = int(time.time() * 1000)
+        if images and isinstance(images, list):
+            for i, img in enumerate(images):
+                img_name = f"{cam_id}_sample_{timestamp_ms}_{i}.jpg"
+                img_path = os.path.join(target_dir, img_name)
+                cv2.imwrite(img_path, img)
+                rel_path = f"occupancy_logs/{today_str}/{safe_area}/{img_name}"
+                image_paths.append(rel_path)
+        elif images is not None:
+            img_name = f"{cam_id}_sample_{timestamp_ms}.jpg"
+            img_path = os.path.join(target_dir, img_name)
+            cv2.imwrite(img_path, images)
+            rel_path = f"occupancy_logs/{today_str}/{safe_area}/{img_name}"
+            image_paths.append(rel_path)
+
+        log_entry = {
+            "id": f"{cam_id}_{timestamp_ms}",
+            "date": today_str,
+            "timestamp": datetime.now().isoformat(),
+            "camera_id": cam_id,
+            "areaCode": area_code,
+            "event": "Presence Sample",
+            "threshold_used": "1-minute sample",
+            "images": image_paths,
+            "raw_payload": raw_payload or {
+                "result": "occupied" if has_person else "empty",
+                "source": "yolo26m+gemma"
+            }
+        }
+        
+        json_path = os.path.join(target_dir, f"{cam_id}_sample_{timestamp_ms}.json")
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(log_entry, f, ensure_ascii=False, indent=2)
+            
+        log_info(f"[{cam_id}] 已写入分钟级底层数据点到: {json_path}")
+    except Exception as e:
+        log_info(f"[{cam_id}] 保存分钟级日志失败: {e}")
 
 def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
     """带冷却去重机制的 MQTT 发布，同时持久化到本地日志供 Web 查阅"""
@@ -208,16 +274,19 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
         print(f"[{cam_id}] MQTT 发送失败: {e}")
 
 # --- Camera Processing Thread (每 60s/20s 抓拍) ---
+# 增加一个全局锁防止多个摄像头并发调用 cv2.VideoCapture() 导致 GStreamer 崩溃
+cv2_open_lock = threading.Lock()
+
 def process_camera(cam_id, cam_info):
     rtsp_url = cam_info.get("url")
     area_code = cam_info.get("areaCode", "UNKNOWN")
     enabled = cam_info.get("enabled", True)
 
     if not enabled:
-        print(f"[{cam_id}] Camera is disabled in config.")
+        log_info(f"[{cam_id}] Camera is disabled in config.")
         return
 
-    print(f"[{cam_id}] Starting timer-based inference thread...")
+    log_info(f"[{cam_id}] Starting timer-based inference thread...")
 
     # 初始化两套状态机
     if cam_id not in presence_machines:
@@ -261,11 +330,12 @@ def process_camera(cam_id, cam_info):
             if need_p_sample or need_s_sample:
                 # 如果连接断开，尝试重连
                 if not cap.isOpened():
-                    # 取消硬编码 cv2.CAP_FFMPEG 后端。
-                    # l4t-ml OpenCV 版本支持 GStreamer，FFMPEG在处理网络流名字时可能会报错 "can't be used to capture by name"
-                    cap.open(rtsp_url) 
+                    with cv2_open_lock:
+                        # 取消硬编码 cv2.CAP_FFMPEG 后端。
+                        # l4t-ml OpenCV 版本支持 GStreamer，FFMPEG在处理网络流名字时可能会报错 "can't be used to capture by name"
+                        cap.open(rtsp_url) 
                     if not cap.isOpened():
-                        print(f"[{cam_id}] 无法连接到视频流: {rtsp_url}")
+                        log_info(f"[{cam_id}] 无法连接到视频流: {rtsp_url}")
                         time.sleep(5)
                         continue
                 
@@ -275,12 +345,12 @@ def process_camera(cam_id, cam_info):
                     for _ in range(3): 
                         ret, frame = cap.read()
                 except Exception as e:
-                    print(f"[{cam_id}] cap.read() 崩溃: {e}")
+                    log_info(f"[{cam_id}] cap.read() 崩溃: {e}")
                     ret = False
                     frame = None
                 
                 if not ret or frame is None:
-                    print(f"[{cam_id}] 读取视频流失败，准备重连...")
+                    log_info(f"[{cam_id}] 读取视频流失败，准备重连...")
                     cap.release()
                     continue
                 
@@ -305,20 +375,27 @@ def process_camera(cam_id, cam_info):
                         # 构造 Gemma Prompt
                         prompt = "这幅办公场景图像中，是否有真实的、活着的人？请回答 YES 或 NO。"
                         
-                        # 为了防止 cv2 在多个线程间争抢内存引发 corrupted size vs. prev_size，必须复制一份独立的内存
-                        frame_copy = frame.copy()
-                        
-                        # 提交复核 (阻塞等待)
-                        gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", frame_copy, prompt, yolo_conf=max_conf)
+                        # 编码为 JPG bytes，彻底脱离 OpenCV 内存池，防止 C++ 底层多线程内存损坏
+                        success, buffer = cv2.imencode('.jpg', frame)
+                        if success:
+                            jpg_bytes = buffer.tobytes()
+                            # 提交复核 (阻塞等待)
+                            gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+                        else:
+                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
+                            gemma_res = "NO"
                         
                         if gemma_res == "YES":
                             has_person = True
-                            print(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {len(boxes)}个)")
+                            log_info(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {len(boxes)}个)")
                         else:
-                            print(f"[{cam_id}] Presence: Gemma 否决了 YOLO 的判定 (误报过滤)")
+                            log_info(f"[{cam_id}] Presence: Gemma 否决了 YOLO 的判定 (误报过滤)")
                     
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
+                    
+                    # 每一分钟的判断都写入本地 log，供前端热力图展示
+                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=frame)
                     
                     # 如果状态机决定收敛，触发 MQTT
                     if event_triggered:
@@ -350,8 +427,13 @@ def process_camera(cam_id, cam_info):
                         max_conf = max([b['conf'] for b in boxes])
                         prompt = "这幅图像中，是否有人正在抽烟？(包括拿着烟、嘴里叼着烟、吐烟圈)。请排除吃东西、喝水、拿笔或托腮等动作。请回答 YES 或 NO。"
                         
-                        frame_copy = frame.copy()
-                        gemma_res = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", frame_copy, prompt, yolo_conf=max_conf)
+                        success, buffer = cv2.imencode('.jpg', frame)
+                        if success:
+                            jpg_bytes = buffer.tobytes()
+                            gemma_res = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", jpg_bytes, prompt, yolo_conf=max_conf)
+                        else:
+                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
+                            gemma_res = "NO"
                         
                         if gemma_res == "YES":
                             # Gemma 确认吸烟

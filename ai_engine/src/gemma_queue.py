@@ -3,8 +3,6 @@ import queue
 import time
 import requests
 import base64
-import cv2
-import numpy as np
 
 class GemmaReviewQueue:
     """
@@ -63,7 +61,7 @@ class GemmaReviewQueue:
                     continue
                     
                 # 真正调用大模型
-                result = self._call_gemma_api(task['image'], task['prompt'])
+                result = self._call_gemma_api(task['jpg_bytes'], task['prompt'])
                 
                 # 回写结果并唤醒调用方
                 task['result'] = result
@@ -75,12 +73,11 @@ class GemmaReviewQueue:
                 print(f"❌ Gemma Worker 异常: {e}")
                 time.sleep(1)
 
-    def _call_gemma_api(self, image, prompt):
+    def _call_gemma_api(self, jpg_bytes, prompt):
         """实际发起 HTTP 请求到本地 llama.cpp 部署的 Gemma 服务"""
         try:
             # 1. 图像转 Base64
-            _, buffer = cv2.imencode('.jpg', image, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            img_b64 = base64.b64encode(buffer).decode('utf-8')
+            img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
             # 2. 组装 llama.cpp completion API 的请求体
             payload = {
@@ -125,9 +122,11 @@ class GemmaReviewQueue:
             except:
                 pass
 
-    def submit_review(self, task_id, task_type, image, prompt, yolo_conf=1.0):
+    def submit_review(self, task_id, task_type, jpg_bytes, prompt, yolo_conf=1.0):
         """
         提交复核任务并阻塞等待结果。
+        为了完全杜绝 OpenCV 多线程引发的 C++ 内存崩溃，
+        这里接收的是纯 Python bytes (jpg_bytes) 而不是 numpy array。
         task_type: 'presence' 或 'smoking'
         yolo_conf: YOLO 给出的置信度，用于决定优先级
         """
@@ -149,7 +148,7 @@ class GemmaReviewQueue:
         # 2. 组装任务对象
         task = {
             'id': task_id,
-            'image': image,
+            'jpg_bytes': jpg_bytes,
             'prompt': prompt,
             'result': None,
             'result_event': threading.Event()
