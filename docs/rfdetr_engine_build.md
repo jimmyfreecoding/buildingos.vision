@@ -38,6 +38,7 @@ python scripts/export-rfdetr-onnx.py --variant medium --size 640x640 --conf 0.25
 
 - 权重会由 `rfdetr` 自动下载并缓存，不需要手动找 `.pt`
 - RF-DETR 导出尺寸必须能被 32 整除，按你的场景推荐 `640x640`
+- ONNX 导出默认使用 `opset=19`，可通过 `--opset` 覆盖
 
 ## 4) 编译 Engine（Jetson 上执行）
 
@@ -84,3 +85,4 @@ docker compose exec ai-engine bash -lc "ls -lh /app/models/rf-detr*.engine"
 - `trtexec not found`
 - 输入名不是 `images`（用 `INPUT_NAME` 覆盖）
 - ONNX 算子不被当前 TensorRT 支持（需调整导出版本或图）
+- 若报 `aten::_upsample_bicubic2d_aa` 不支持：在更新的导出环境重试（建议 torch>=2.5, torchvision>=0.20, onnx>=1.16），并使用 `--opset 19`

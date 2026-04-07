@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--variant", default="medium", choices=["nano", "small", "medium", "large"], help="RF-DETR variant")
     parser.add_argument("--size", default="640x640", help="input size, format HxW, must be divisible by 32")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold used in exported graph")
+    parser.add_argument("--opset", type=int, default=19, help="onnx opset version, recommend >=18")
     parser.add_argument("--output", default="ai_engine/models/rf-detr.onnx", help="output onnx path")
     args = parser.parse_args()
 
@@ -60,12 +61,29 @@ def main():
     export_dir = os.path.dirname(os.path.abspath(args.output)) or "."
 
     print(f"exporting onnx to: {args.output}")
-    model.export(
-        conf_threshold=args.conf,
-        shape=(h, w),
-        export_name=export_name,
-        export_dir=export_dir,
-    )
+    try:
+        model.export(
+            conf_threshold=args.conf,
+            shape=(h, w),
+            export_name=export_name,
+            export_dir=export_dir,
+            opset_version=args.opset,
+        )
+    except TypeError:
+        model.export(
+            conf_threshold=args.conf,
+            shape=(h, w),
+            export_name=export_name,
+            export_dir=export_dir,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "aten::_upsample_bicubic2d_aa" in msg:
+            print("export failed on aten::_upsample_bicubic2d_aa")
+            print("try upgrading torch/torchvision and export on a newer x86 Python env")
+            print("recommended: torch>=2.5, torchvision>=0.20, onnx>=1.16, then retry with --opset 19")
+            return 4
+        raise
 
     expected = os.path.join(export_dir, f"{export_name}.onnx")
     if not os.path.exists(expected):
