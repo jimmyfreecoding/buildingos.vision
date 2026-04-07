@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from contextlib import contextmanager
 
 
 def register_custom_onnx_symbolics(opset: int):
@@ -20,6 +21,29 @@ def register_custom_onnx_symbolics(opset: int):
         register_custom_op_symbolic("aten::_upsample_bicubic2d_aa", _upsample_bicubic2d_aa, opset)
     except Exception:
         pass
+
+
+@contextmanager
+def disable_antialias_interpolate():
+    try:
+        import torch.nn.functional as F
+    except Exception:
+        yield
+        return
+    origin = F.interpolate
+
+    def wrapped(*args, **kwargs):
+        mode = kwargs.get("mode", None)
+        antialias = kwargs.get("antialias", None)
+        if mode in ("bicubic", "bilinear") and antialias is not False:
+            kwargs["antialias"] = False
+        return origin(*args, **kwargs)
+
+    F.interpolate = wrapped
+    try:
+        yield
+    finally:
+        F.interpolate = origin
 
 
 def parse_size(size_text: str):
@@ -83,20 +107,22 @@ def main():
 
     print(f"exporting onnx to: {args.output}")
     try:
-        model.export(
-            conf_threshold=args.conf,
-            shape=(h, w),
-            export_name=export_name,
-            export_dir=export_dir,
-            opset_version=args.opset,
-        )
+        with disable_antialias_interpolate():
+            model.export(
+                conf_threshold=args.conf,
+                shape=(h, w),
+                export_name=export_name,
+                export_dir=export_dir,
+                opset_version=args.opset,
+            )
     except TypeError:
-        model.export(
-            conf_threshold=args.conf,
-            shape=(h, w),
-            export_name=export_name,
-            export_dir=export_dir,
-        )
+        with disable_antialias_interpolate():
+            model.export(
+                conf_threshold=args.conf,
+                shape=(h, w),
+                export_name=export_name,
+                export_dir=export_dir,
+            )
     except Exception as e:
         msg = str(e)
         if "aten::_upsample_bicubic2d_aa" in msg:
