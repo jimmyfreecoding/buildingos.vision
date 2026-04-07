@@ -67,10 +67,10 @@ docker compose exec ai-engine bash -lc "bash /app/build-rfdetr-engine.sh /app/mo
 docker compose exec ai-engine bash -lc "BUILD_MODE=dynamic INPUT_NAME=images MIN_SHAPE=1x3x640x640 OPT_SHAPE=1x3x640x640 MAX_SHAPE=2x3x640x640 WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16-dyn.engine fp16"
 ```
 
-优先尝试 560x560（RF-DETR 常见稳定尺寸）：
+优先尝试 576x576（满足当前模型导出约束，且较 640 更省内存）：
 
 ```bash
-docker compose exec ai-engine bash -lc "BUILD_MODE=static OPT_SHAPE=1x3x560x560 WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16-560.engine fp16"
+docker compose exec ai-engine bash -lc "BUILD_MODE=static OPT_SHAPE=1x3x576x576 WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16-576.engine fp16"
 ```
 
 INT8 编译：
@@ -93,4 +93,12 @@ docker compose exec ai-engine bash -lc "ls -lh /app/models/rf-detr*.engine"
 - 输入名不是 `images`（用 `INPUT_NAME` 覆盖）
 - ONNX 算子不被当前 TensorRT 支持（需调整导出版本或图）
 - 若报 `aten::_upsample_bicubic2d_aa` 不支持：在更新的导出环境重试（建议 torch>=2.5, torchvision>=0.20, onnx>=1.16），并使用 `--opset 19`
-- 若编译期出现 `double free or corruption`：先用 `BUILD_MODE=static OPT_LEVEL=2 SKIP_INFERENCE=1 WORKSPACE_MB=512 USE_TIMING_CACHE=0`，再尝试 `OPT_SHAPE=1x3x560x560`
+- 若编译期出现 `double free or corruption`：先用 `BUILD_MODE=static OPT_LEVEL=2 SKIP_INFERENCE=1 WORKSPACE_MB=512 USE_TIMING_CACHE=0`，再尝试 `OPT_SHAPE=1x3x576x576`
+
+若仍出现 `double free or corruption`，先做 ONNX 预处理再编译：
+
+```bash
+pip install onnx onnxsim
+python scripts/prepare-rfdetr-onnx.py --input ai_engine/models/rf-detr.onnx --output ai_engine/models/rf-detr-trt.onnx --shape 1,3,576,576 --target-opset 16
+docker compose exec ai-engine bash -lc "BUILD_MODE=static OPT_SHAPE=1x3x576x576 WORKSPACE_MB=512 OPT_LEVEL=1 USE_TIMING_CACHE=0 SKIP_INFERENCE=1 bash /app/build-rfdetr-engine.sh /app/models/rf-detr-trt.onnx /app/models/rf-detr-fp16-576.engine fp16"
+```
