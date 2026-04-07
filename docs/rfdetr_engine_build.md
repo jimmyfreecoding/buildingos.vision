@@ -31,13 +31,13 @@ pip install "rfdetr[onnx]"
 导出 Medium 版本（推荐）：
 
 ```bash
-python scripts/export-rfdetr-onnx.py --variant medium --size 560x560 --conf 0.25 --output ai_engine/models/rf-detr.onnx
+python scripts/export-rfdetr-onnx.py --variant medium --size 640x640 --conf 0.25 --output ai_engine/models/rf-detr.onnx
 ```
 
 说明：
 
 - 权重会由 `rfdetr` 自动下载并缓存，不需要手动找 `.pt`
-- RF-DETR 常用输入是 `560x560`
+- RF-DETR 导出尺寸必须能被 32 整除，按你的场景推荐 `640x640`
 
 ## 4) 编译 Engine（Jetson 上执行）
 
@@ -53,16 +53,16 @@ docker compose exec ai-engine bash -lc "chmod +x /app/scripts/build-rfdetr-engin
 
 默认 shape 已按 RF-DETR 设置为：
 
-- `MIN_SHAPE=1x3x560x560`
-- `OPT_SHAPE=1x3x560x560`
-- `MAX_SHAPE=4x3x560x560`
+- `MIN_SHAPE=1x3x640x640`
+- `OPT_SHAPE=1x3x640x640`
+- `MAX_SHAPE=4x3x640x640`
 
 ## 5) 可选：自定义 shape / INT8
 
 自定义动态 shape：
 
 ```bash
-docker compose exec ai-engine bash -lc "INPUT_NAME=images MIN_SHAPE=1x3x560x560 OPT_SHAPE=2x3x560x560 MAX_SHAPE=4x3x560x560 /app/scripts/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
+docker compose exec ai-engine bash -lc "INPUT_NAME=images MIN_SHAPE=1x3x640x640 OPT_SHAPE=2x3x640x640 MAX_SHAPE=4x3x640x640 /app/scripts/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
 ```
 
 INT8 编译：

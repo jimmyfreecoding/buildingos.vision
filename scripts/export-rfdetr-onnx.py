@@ -7,11 +7,13 @@ def parse_size(size_text: str):
     parts = size_text.lower().replace("x", ",").split(",")
     parts = [p.strip() for p in parts if p.strip()]
     if len(parts) != 2:
-        raise ValueError(f"invalid size: {size_text}, expected like 560x560")
+        raise ValueError(f"invalid size: {size_text}, expected like 640x640")
     h = int(parts[0])
     w = int(parts[1])
     if h <= 0 or w <= 0:
         raise ValueError("height and width must be positive")
+    if h % 32 != 0 or w % 32 != 0:
+        raise ValueError(f"size must be divisible by 32, got {h}x{w}. try 576x576 or 640x640")
     return h, w
 
 
@@ -24,7 +26,7 @@ def ensure_parent(path: str):
 def main():
     parser = argparse.ArgumentParser(description="Export RF-DETR ONNX with official rfdetr package")
     parser.add_argument("--variant", default="medium", choices=["nano", "small", "medium", "large"], help="RF-DETR variant")
-    parser.add_argument("--size", default="560x560", help="input size, format HxW")
+    parser.add_argument("--size", default="640x640", help="input size, format HxW, must be divisible by 32")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold used in exported graph")
     parser.add_argument("--output", default="ai_engine/models/rf-detr.onnx", help="output onnx path")
     args = parser.parse_args()
@@ -44,7 +46,11 @@ def main():
     }
     model_cls = variant_map[args.variant]
 
-    h, w = parse_size(args.size)
+    try:
+        h, w = parse_size(args.size)
+    except ValueError as e:
+        print(f"invalid --size: {e}")
+        return 3
     ensure_parent(args.output)
 
     print(f"loading RF-DETR variant: {args.variant}")

@@ -5,9 +5,9 @@ ONNX_PATH="${1:-/app/models/rf-detr.onnx}"
 ENGINE_PATH="${2:-/app/models/rf-detr-fp16.engine}"
 PRECISION="${3:-fp16}"
 INPUT_NAME="${INPUT_NAME:-images}"
-MIN_SHAPE="${MIN_SHAPE:-1x3x560x560}"
-OPT_SHAPE="${OPT_SHAPE:-1x3x560x560}"
-MAX_SHAPE="${MAX_SHAPE:-4x3x560x560}"
+MIN_SHAPE="${MIN_SHAPE:-1x3x640x640}"
+OPT_SHAPE="${OPT_SHAPE:-1x3x640x640}"
+MAX_SHAPE="${MAX_SHAPE:-4x3x640x640}"
 WORKSPACE_MB="${WORKSPACE_MB:-4096}"
 
 if [[ -x "/usr/src/tensorrt/bin/trtexec" ]]; then
