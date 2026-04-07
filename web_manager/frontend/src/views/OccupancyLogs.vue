@@ -158,7 +158,8 @@
                   <el-image 
                     v-if="log.images && log.images.length > 0"
                     :src="getImageUrl(log.images[log.images.length - 1])" 
-                    :preview-src-list="[getImageUrl(log.images[log.images.length - 1])].concat(log.images.length > 1 ? [getImageUrl(log.images[0])] : [])"
+                    :preview-src-list="log.images.map(i => getImageUrl(i))"
+                    :initial-index="log.images.length > 0 ? log.images.length - 1 : 0"
                     fit="contain"
                     class="log-image"
                   />
