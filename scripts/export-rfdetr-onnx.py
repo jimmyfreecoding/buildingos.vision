@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import shutil
 from contextlib import contextmanager
 
 
@@ -64,6 +65,18 @@ def ensure_parent(path: str):
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
+
+
+def resolve_exported_onnx(expected_path: str, export_name: str):
+    candidates = [
+        expected_path,
+        os.path.abspath(os.path.join("output", "inference_model.onnx")),
+        os.path.abspath(os.path.join("output", f"{export_name}.onnx")),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def main():
@@ -133,11 +146,20 @@ def main():
         raise
 
     expected = os.path.join(export_dir, f"{export_name}.onnx")
-    if not os.path.exists(expected):
+    actual = resolve_exported_onnx(expected, export_name)
+    if actual is None:
         print(f"export finished but file not found: {expected}")
+        print("checked: output/inference_model.onnx and output/<export_name>.onnx")
         return 2
 
-    print(f"onnx ready: {expected}")
+    target = os.path.abspath(args.output)
+    if os.path.abspath(actual) != target:
+        ensure_parent(target)
+        shutil.copyfile(actual, target)
+        print(f"onnx exported to {actual}, copied to {target}")
+    else:
+        print(f"onnx ready: {actual}")
+
     return 0
 
 
