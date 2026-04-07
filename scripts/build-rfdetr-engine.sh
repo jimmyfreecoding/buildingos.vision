@@ -4,7 +4,7 @@ set -euo pipefail
 ONNX_PATH="${1:-/app/models/rf-detr.onnx}"
 ENGINE_PATH="${2:-/app/models/rf-detr-fp16.engine}"
 PRECISION="${3:-fp16}"
-INPUT_NAME="${INPUT_NAME:-images}"
+INPUT_NAME="${INPUT_NAME:-input}"
 MIN_SHAPE="${MIN_SHAPE:-1x3x640x640}"
 OPT_SHAPE="${OPT_SHAPE:-1x3x640x640}"
 MAX_SHAPE="${MAX_SHAPE:-2x3x640x640}"
@@ -17,6 +17,7 @@ TIMING_CACHE_FILE="${TIMING_CACHE_FILE:-/tmp/rfdetr_timing.cache}"
 MAX_AUX_STREAMS="${MAX_AUX_STREAMS:-0}"
 ALLOCATION_STRATEGY="${ALLOCATION_STRATEGY:-runtime}"
 ENABLE_PREVIEW_PROFILE_SHARING="${ENABLE_PREVIEW_PROFILE_SHARING:-1}"
+USE_EXPLICIT_SHAPES="${USE_EXPLICIT_SHAPES:-0}"
 
 if [[ -x "/usr/src/tensorrt/bin/trtexec" ]]; then
   TRTEXEC="/usr/src/tensorrt/bin/trtexec"
@@ -66,7 +67,9 @@ if [[ "${BUILD_MODE,,}" == "dynamic" ]]; then
     "--maxShapes=$INPUT_NAME:$MAX_SHAPE"
   )
 else
-  COMMON_ARGS+=("--shapes=$INPUT_NAME:$OPT_SHAPE")
+  if [[ "$USE_EXPLICIT_SHAPES" == "1" ]]; then
+    COMMON_ARGS+=("--shapes=$INPUT_NAME:$OPT_SHAPE")
+  fi
 fi
 
 if [[ "$SKIP_INFERENCE" == "1" ]]; then

@@ -1,6 +1,6 @@
 # 使用可配置的 JetPack 6.x 官方机器学习基础镜像
-# 默认提升到 r36.4.0（对应更新的 TensorRT 10.x 工具链）
-ARG L4T_ML_IMAGE=nvcr.io/nvidia/l4t-ml:r36.4.0-py3
+# 注意：当前 NGC 可用稳定标签为 r36.2.0-py3（r36.4.0-py3 在 l4t-ml 仓库不存在）
+ARG L4T_ML_IMAGE=nvcr.io/nvidia/l4t-ml:r36.2.0-py3
 FROM ${L4T_ML_IMAGE}
 
 # 环境变量设置
