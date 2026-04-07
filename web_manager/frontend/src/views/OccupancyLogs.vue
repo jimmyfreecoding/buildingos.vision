@@ -46,9 +46,9 @@
       <div v-else v-for="dayData in displayDays" :key="dayData.date" class="day-heatmap">
         <h4 class="day-title">{{ dayData.date }}</h4>
         <div class="heatmap-container">
-          <!-- Y-axis (Minutes) -->
+          <!-- Y-axis (Minutes): 50m at top, 0m at bottom -->
           <div class="y-axis">
-            <div class="y-label" v-for="m in 6" :key="m">{{ (m - 1) * 10 }}m</div>
+            <div class="y-label" v-for="m in 6" :key="m">{{ (6 - m) * 10 }}m</div>
           </div>
           
           <!-- Grid -->
@@ -58,13 +58,13 @@
                    <el-tooltip
                       v-for="minuteIdx in 6" :key="minuteIdx"
                       placement="top"
-                      :content="getTooltip(dayData, hour-1, minuteIdx-1)"
+                      :content="getTooltip(dayData, hour-1, 6 - minuteIdx)"
                       :show-after="200"
                    >
                      <div 
                         class="cell" 
-                        :class="'color-level-' + getCellIntensity(dayData, hour-1, minuteIdx-1)"
-                        @click="openDetail(dayData, hour-1, minuteIdx-1)"
+                        :class="'color-level-' + getCellIntensity(dayData, hour-1, 6 - minuteIdx)"
+                        @click="openDetail(dayData, hour-1, 6 - minuteIdx)"
                      ></div>
                    </el-tooltip>
                 </div>
@@ -79,44 +79,79 @@
     </div>
 
     <!-- 详情弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="800px" top="5vh">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1000px" top="5vh">
       <div v-if="dialogLogs.length === 0">
         <el-empty description="该时间段无记录"></el-empty>
       </div>
       <el-timeline v-else>
         <el-timeline-item
-          v-for="(log, index) in dialogLogs"
-          :key="log.id"
-          :timestamp="formatTime(log.timestamp)"
-          :type="getEventTypeColor(log.event)"
+          v-for="group in groupedLogs"
+          :key="group.time"
+          :timestamp="group.time"
+          type="primary"
         >
           <el-card shadow="hover" class="log-detail-card">
             <div class="log-header">
-              <el-tag :type="getResultTagType(log)" size="small" effect="dark">
-                {{ formatResult(log) }}
+              <el-tag :type="getGroupResultTagType(group)" size="small" effect="dark">
+                {{ formatGroupResult(group) }}
               </el-tag>
-              <span class="log-event">{{ log.event === 'Smoking Alert' ? '吸烟违规告警' : '人员状态更新' }}</span>
+              <span class="log-event">人员状态更新 (多路综合)</span>
             </div>
             
-            <div class="log-meta" style="margin-top: 10px; font-size: 13px; color: #8b949e;">
-              <p><strong>数据来源:</strong> {{ log.raw_payload?.source || 'yolo26m+gemma' }}</p>
-              <p><strong>最终裁决:</strong> <span style="color: #409EFF">{{ log.threshold_used }}</span></p>
+            <div class="log-meta" style="margin-top: 10px; font-size: 13px; color: #606266;">
+              <p><strong>策略链路:</strong> yolo26m+gemma</p>
+              <p style="margin-top: 5px;">
+                <strong>最终裁决:</strong> 
+                <el-popover placement="bottom" title="1-minute sample 裁决过程" width="400" trigger="click">
+                  <template #reference>
+                    <el-link type="primary" :underline="false">1-minute sample (点击查看)</el-link>
+                  </template>
+                  <div style="font-size: 13px;">
+                    <p v-for="log in group.logs" :key="log.id" style="margin-bottom: 5px;">
+                      <b><el-icon><VideoCamera /></el-icon> {{ log.camera_id }}:</b> 
+                      <span v-if="log.raw_payload?.result === 'occupied'" style="color: #67C23A; margin-left: 5px;">判定有人</span>
+                      <span v-else style="color: #909399; margin-left: 5px;">判定无人</span>
+                      <span style="margin-left: 5px; color: #E6A23C;" v-if="log.raw_payload?.yolo_count > 0">(YOLO检测到 {{ log.raw_payload?.yolo_count }} 人)</span>
+                    </p>
+                    <el-divider style="margin: 10px 0;"></el-divider>
+                    <p><b>场景综合结果:</b> 
+                      <span v-if="group.logs.some(l => l.raw_payload?.result === 'occupied')" style="color: #67C23A; font-weight: bold;">有人 (Occupied)</span>
+                      <span v-else style="color: #909399; font-weight: bold;">无人 (Empty)</span>
+                    </p>
+                  </div>
+                </el-popover>
+              </p>
             </div>
 
-            <div v-if="log.images && log.images.length > 0" class="image-gallery" style="margin-top: 15px;">
-              <p><strong>现场抓拍与复核截图:</strong></p>
-              <el-row :gutter="10">
-                <el-col :span="12" v-for="(img, imgIdx) in log.images" :key="imgIdx">
+            <div style="margin-top: 15px; font-size: 13px; font-weight: bold; color: #303133; margin-bottom: 10px;">
+              现场抓拍与复核证据 (同频对比):
+            </div>
+            
+            <!-- 多摄像头左右排列 -->
+            <el-row :gutter="15">
+              <el-col :span="24 / Math.min(group.logs.length, 4)" v-for="log in group.logs" :key="log.id">
+                <div class="camera-evidence">
+                  <p style="font-weight: bold; margin-bottom: 5px; color: #409EFF; font-size: 13px;">
+                    <el-icon><VideoCamera /></el-icon> {{ log.camera_id }}
+                  </p>
                   <el-image 
-                    :src="getImageUrl(img)" 
-                    :preview-src-list="log.images.map(i => getImageUrl(i))"
+                    v-if="log.images && log.images.length > 0"
+                    :src="getImageUrl(log.images[0])" 
+                    :preview-src-list="[getImageUrl(log.images[0])]"
                     fit="contain"
                     class="log-image"
-                    :initial-index="imgIdx"
                   />
-                </el-col>
-              </el-row>
-            </div>
+                  <div class="evidence-chain" style="margin-top: 10px; font-size: 12px; color: #606266; background: #f5f7fa; padding: 8px; border-radius: 4px; min-height: 80px;">
+                    <b style="color: #303133;">判断证据链:</b>
+                    <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
+                      <li v-for="(step, idx) in (log.raw_payload?.decision_chain || ['直接采信无日志'])" :key="idx" style="margin-bottom: 3px;">
+                        {{ step }}
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </el-col>
+            </el-row>
           </el-card>
         </el-timeline-item>
       </el-timeline>
@@ -128,7 +163,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { Calendar } from '@element-plus/icons-vue'
+import { Calendar, VideoCamera } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const allLogs = ref([])
@@ -277,6 +312,34 @@ const getTooltip = (dayData, hour, minuteIdx) => {
   
   const occupiedLogs = logs.filter(l => l.raw_payload?.result === 'occupied')
   return `${timeStr} | 有人: ${occupiedLogs.length}次, 总记录: ${logs.length}次`
+}
+
+// 提取并聚合多摄像头的按分钟日志
+const groupedLogs = computed(() => {
+  const groups = {}
+  dialogLogs.value.forEach(log => {
+    if (!log.timestamp) return
+    const d = new Date(log.timestamp)
+    const minKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    if (!groups[minKey]) groups[minKey] = []
+    groups[minKey].push(log)
+  })
+  
+  // 按时间倒序
+  return Object.keys(groups).sort((a, b) => new Date(b) - new Date(a)).map(k => ({
+    time: k,
+    logs: groups[k]
+  }))
+})
+
+const getGroupResultTagType = (group) => {
+  const isOccupied = group.logs.some(l => l.raw_payload?.result === 'occupied')
+  return isOccupied ? 'success' : 'info'
+}
+
+const formatGroupResult = (group) => {
+  const isOccupied = group.logs.some(l => l.raw_payload?.result === 'occupied')
+  return isOccupied ? '区域有人 (Occupied)' : '区域无人 (Empty)'
 }
 
 const openDetail = (dayData, hour, minuteIdx) => {

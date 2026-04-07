@@ -141,7 +141,7 @@ except Exception as e:
     print(f"Error connecting to MQTT: {e}")
     print("WARNING: MQTT connection failed, but AI Engine will continue to run without publishing events.")
 
-def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None):
+def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0):
     """
     不管是否触发 MQTT 报警，每一分钟（或每一个采样周期）都将原始判定结果
     追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
@@ -195,7 +195,9 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
             "images": image_paths,
             "raw_payload": raw_payload or {
                 "result": "occupied" if has_person else "empty",
-                "source": "yolo26m+gemma"
+                "source": "yolo26m+gemma",
+                "decision_chain": decision_chain or [],
+                "yolo_count": yolo_count
             }
         }
         
@@ -370,16 +372,31 @@ def process_camera(cam_id, cam_info):
                     boxes = pose_model.predict(frame)
                     
                     has_person = False
-                    if len(boxes) > 0:
-                        # 有候选框，送 Gemma 二级复核
+                    decision_chain = []
+                    yolo_count = len(boxes)
+                    annotated_frame = frame.copy()
+                    
+                    # 绘制时间戳
+                    cv2.putText(annotated_frame, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    
+                    if yolo_count > 0:
+                        decision_chain.append(f"YOLO 检测到 {yolo_count} 个候选目标")
+                        
+                        # 在图上画红框
+                        for b in boxes:
+                            x1, y1, x2, y2 = b['bbox']
+                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                            cv2.putText(annotated_frame, f"YOLO: {b['conf']:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                        
                         # 获取最高置信度用于队列优先级
                         max_conf = max([b['conf'] for b in boxes])
                         
                         # 构造 Gemma Prompt
-                        prompt = "这幅办公场景图像中，是否有真实的、活着的人？请回答 YES 或 NO。"
+                        prompt = "这幅办公场景图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
                         
                         # 编码为 JPG bytes，彻底脱离 OpenCV 内存池，防止 C++ 底层多线程内存损坏
-                        success, buffer = cv2.imencode('.jpg', frame)
+                        # 此时把带有红框的 annotated_frame 送给 Gemma
+                        success, buffer = cv2.imencode('.jpg', annotated_frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
                             # 提交复核 (阻塞等待)
@@ -390,15 +407,19 @@ def process_camera(cam_id, cam_info):
                         
                         if gemma_res == "YES":
                             has_person = True
-                            log_info(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {len(boxes)}个)")
+                            decision_chain.append("Gemma 复核: 确认红框内为真实人员")
+                            log_info(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {yolo_count}个)")
                         else:
+                            decision_chain.append("Gemma 复核: 否决 (认定为误报/假人)")
                             log_info(f"[{cam_id}] Presence: Gemma 否决了 YOLO 的判定 (误报过滤)")
+                    else:
+                        decision_chain.append("YOLO 未检测到人员")
                     
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
                     
-                    # 每一分钟的判断都写入本地 log，供前端热力图展示
-                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=frame)
+                    # 每一分钟的判断都写入本地 log，供前端热力图展示 (使用画好框和时间戳的图片)
+                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=annotated_frame, decision_chain=decision_chain, yolo_count=yolo_count)
                     
                     # 如果状态机决定收敛，触发 MQTT
                     if event_triggered:
