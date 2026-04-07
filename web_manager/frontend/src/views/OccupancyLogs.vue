@@ -55,6 +55,7 @@
           <div class="grid-content">
              <div class="grid-columns">
                 <div class="column" v-for="hour in 24" :key="hour">
+                   <!-- 反转 minuteIdx 渲染顺序，使 DOM 节点也自下而上排列 0m, 10m...50m -->
                    <el-tooltip
                       v-for="minuteIdx in 6" :key="minuteIdx"
                       placement="top"
@@ -136,8 +137,8 @@
                   </p>
                   <el-image 
                     v-if="log.images && log.images.length > 0"
-                    :src="getImageUrl(log.images[0])" 
-                    :preview-src-list="[getImageUrl(log.images[0])]"
+                    :src="getImageUrl(log.images[log.images.length - 1])" 
+                    :preview-src-list="log.images.map(i => getImageUrl(i))"
                     fit="contain"
                     class="log-image"
                   />

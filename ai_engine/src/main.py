@@ -418,8 +418,8 @@ def process_camera(cam_id, cam_info):
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
                     
-                    # 每一分钟的判断都写入本地 log，供前端热力图展示 (使用画好框和时间戳的图片)
-                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=annotated_frame, decision_chain=decision_chain, yolo_count=yolo_count)
+                    # 每一分钟的判断都写入本地 log，供前端热力图展示 (保存原始图和画框图，方便前端点击查看多级证据)
+                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=[frame, annotated_frame] if yolo_count > 0 else frame, decision_chain=decision_chain, yolo_count=yolo_count)
                     
                     # 如果状态机决定收敛，触发 MQTT
                     if event_triggered:
