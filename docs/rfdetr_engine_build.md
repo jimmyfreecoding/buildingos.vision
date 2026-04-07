@@ -56,7 +56,8 @@ docker compose exec ai-engine bash -lc "chmod +x /app/scripts/build-rfdetr-engin
 
 - `MIN_SHAPE=1x3x640x640`
 - `OPT_SHAPE=1x3x640x640`
-- `MAX_SHAPE=4x3x640x640`
+- `MAX_SHAPE=2x3x640x640`
+- 默认先走 `BUILD_MODE=static` 与 `SKIP_INFERENCE=1`，优先保证编译稳定性
 
 ## 5) 可选：自定义 shape / INT8
 
@@ -86,3 +87,4 @@ docker compose exec ai-engine bash -lc "ls -lh /app/models/rf-detr*.engine"
 - 输入名不是 `images`（用 `INPUT_NAME` 覆盖）
 - ONNX 算子不被当前 TensorRT 支持（需调整导出版本或图）
 - 若报 `aten::_upsample_bicubic2d_aa` 不支持：在更新的导出环境重试（建议 torch>=2.5, torchvision>=0.20, onnx>=1.16），并使用 `--opset 19`
+- 若编译期出现 `double free or corruption`：先用 `BUILD_MODE=static OPT_LEVEL=3 SKIP_INFERENCE=1 WORKSPACE_MB=2048`，成功后再尝试 `BUILD_MODE=dynamic`

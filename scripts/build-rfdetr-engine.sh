@@ -7,8 +7,11 @@ PRECISION="${3:-fp16}"
 INPUT_NAME="${INPUT_NAME:-images}"
 MIN_SHAPE="${MIN_SHAPE:-1x3x640x640}"
 OPT_SHAPE="${OPT_SHAPE:-1x3x640x640}"
-MAX_SHAPE="${MAX_SHAPE:-4x3x640x640}"
-WORKSPACE_MB="${WORKSPACE_MB:-4096}"
+MAX_SHAPE="${MAX_SHAPE:-2x3x640x640}"
+WORKSPACE_MB="${WORKSPACE_MB:-2048}"
+BUILD_MODE="${BUILD_MODE:-static}"
+OPT_LEVEL="${OPT_LEVEL:-3}"
+SKIP_INFERENCE="${SKIP_INFERENCE:-1}"
 
 if [[ -x "/usr/src/tensorrt/bin/trtexec" ]]; then
   TRTEXEC="/usr/src/tensorrt/bin/trtexec"
@@ -29,15 +32,24 @@ mkdir -p "$(dirname "$ENGINE_PATH")"
 COMMON_ARGS=(
   "--onnx=$ONNX_PATH"
   "--saveEngine=$ENGINE_PATH"
-  "--workspace=$WORKSPACE_MB"
-  "--minShapes=$INPUT_NAME:$MIN_SHAPE"
-  "--optShapes=$INPUT_NAME:$OPT_SHAPE"
-  "--maxShapes=$INPUT_NAME:$MAX_SHAPE"
-  "--builderOptimizationLevel=5"
+  "--memPoolSize=workspace:$WORKSPACE_MB"
+  "--builderOptimizationLevel=$OPT_LEVEL"
   "--timingCacheFile=/tmp/rfdetr_timing.cache"
-  "--dumpLayerInfo"
-  "--dumpProfile"
 )
+
+if [[ "${BUILD_MODE,,}" == "dynamic" ]]; then
+  COMMON_ARGS+=(
+    "--minShapes=$INPUT_NAME:$MIN_SHAPE"
+    "--optShapes=$INPUT_NAME:$OPT_SHAPE"
+    "--maxShapes=$INPUT_NAME:$MAX_SHAPE"
+  )
+else
+  COMMON_ARGS+=("--shapes=$INPUT_NAME:$OPT_SHAPE")
+fi
+
+if [[ "$SKIP_INFERENCE" == "1" ]]; then
+  COMMON_ARGS+=("--skipInference")
+fi
 
 case "${PRECISION,,}" in
   fp16)
