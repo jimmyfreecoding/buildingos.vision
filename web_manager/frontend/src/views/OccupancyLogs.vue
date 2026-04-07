@@ -154,10 +154,11 @@
                   <p style="font-weight: bold; margin-bottom: 5px; color: #409EFF; font-size: 13px;">
                     <el-icon><VideoCamera /></el-icon> {{ log.camera_id }}
                   </p>
+                  <!-- 显示最后一张图（也就是带有时间戳和红框的 annotated_frame） -->
                   <el-image 
                     v-if="log.images && log.images.length > 0"
                     :src="getImageUrl(log.images[log.images.length - 1])" 
-                    :preview-src-list="log.images.map(i => getImageUrl(i))"
+                    :preview-src-list="[getImageUrl(log.images[log.images.length - 1])].concat(log.images.length > 1 ? [getImageUrl(log.images[0])] : [])"
                     fit="contain"
                     class="log-image"
                   />
