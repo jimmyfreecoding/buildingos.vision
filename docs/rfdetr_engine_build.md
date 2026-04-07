@@ -49,7 +49,7 @@ python scripts/export-rfdetr-onnx.py --variant medium --size 640x640 --conf 0.25
 标准 FP16 编译：
 
 ```bash
-docker compose exec ai-engine bash -lc "chmod +x /app/scripts/build-rfdetr-engine.sh && /app/scripts/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
+docker compose exec ai-engine bash -lc "bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
 ```
 
 默认 shape 已按 RF-DETR 设置为：
@@ -57,20 +57,26 @@ docker compose exec ai-engine bash -lc "chmod +x /app/scripts/build-rfdetr-engin
 - `MIN_SHAPE=1x3x640x640`
 - `OPT_SHAPE=1x3x640x640`
 - `MAX_SHAPE=2x3x640x640`
-- 默认先走 `BUILD_MODE=static` 与 `SKIP_INFERENCE=1`，优先保证编译稳定性
+- 默认先走 `BUILD_MODE=static`、`SKIP_INFERENCE=1`、`WORKSPACE_MB=512`、`OPT_LEVEL=2`、`USE_TIMING_CACHE=0`
 
 ## 5) 可选：自定义 shape / INT8
 
 自定义动态 shape：
 
 ```bash
-docker compose exec ai-engine bash -lc "INPUT_NAME=images MIN_SHAPE=1x3x640x640 OPT_SHAPE=2x3x640x640 MAX_SHAPE=4x3x640x640 /app/scripts/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16.engine fp16"
+docker compose exec ai-engine bash -lc "BUILD_MODE=dynamic INPUT_NAME=images MIN_SHAPE=1x3x640x640 OPT_SHAPE=1x3x640x640 MAX_SHAPE=2x3x640x640 WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16-dyn.engine fp16"
+```
+
+优先尝试 560x560（RF-DETR 常见稳定尺寸）：
+
+```bash
+docker compose exec ai-engine bash -lc "BUILD_MODE=static OPT_SHAPE=1x3x560x560 WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-fp16-560.engine fp16"
 ```
 
 INT8 编译：
 
 ```bash
-docker compose exec ai-engine bash -lc "CALIB_CACHE=/app/models/rf-detr-int8.cache /app/scripts/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-int8.engine int8"
+docker compose exec ai-engine bash -lc "CALIB_CACHE=/app/models/rf-detr-int8.cache WORKSPACE_MB=512 OPT_LEVEL=2 USE_TIMING_CACHE=0 bash /app/build-rfdetr-engine.sh /app/models/rf-detr.onnx /app/models/rf-detr-int8.engine int8"
 ```
 
 ## 6) 验证与排错
@@ -87,4 +93,4 @@ docker compose exec ai-engine bash -lc "ls -lh /app/models/rf-detr*.engine"
 - 输入名不是 `images`（用 `INPUT_NAME` 覆盖）
 - ONNX 算子不被当前 TensorRT 支持（需调整导出版本或图）
 - 若报 `aten::_upsample_bicubic2d_aa` 不支持：在更新的导出环境重试（建议 torch>=2.5, torchvision>=0.20, onnx>=1.16），并使用 `--opset 19`
-- 若编译期出现 `double free or corruption`：先用 `BUILD_MODE=static OPT_LEVEL=3 SKIP_INFERENCE=1 WORKSPACE_MB=2048`，成功后再尝试 `BUILD_MODE=dynamic`
+- 若编译期出现 `double free or corruption`：先用 `BUILD_MODE=static OPT_LEVEL=2 SKIP_INFERENCE=1 WORKSPACE_MB=512 USE_TIMING_CACHE=0`，再尝试 `OPT_SHAPE=1x3x560x560`
