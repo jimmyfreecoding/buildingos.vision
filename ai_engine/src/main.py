@@ -10,6 +10,7 @@ import paho.mqtt.client as mqtt
 
 # 导入我们新写的双轨制底层驱动与业务大脑
 from yolo_infer import YoloTensorRTEngine
+from rfdetr_trt_infer import RFDETRTensorRTEngine
 from state_machine import PresenceStateMachine, SmokingStateMachine
 from gemma_queue import gemma_queue
 
@@ -100,26 +101,53 @@ mqtt_cooldowns = {}    # MQTT 发送冷却时间戳 (去重键)
 # 全局模型占位符 (延迟加载)
 pose_model = None
 smoking_model = None
+presence_detector_source = "yolo26m-pose"
 
 # 确保 TensorRT 初始化的锁，防止多个摄像头线程同时触发初始化
 trt_init_lock = threading.Lock()
 
 # --- Init TensorRT Engines ---
 def init_tensorrt_models():
-    global pose_model, smoking_model
+    global pose_model, smoking_model, presence_detector_source
     
     with trt_init_lock:
         if pose_model is not None and smoking_model is not None:
             return
             
-        print("Initializing TensorRT Models (yolo_infer)...")
+        print("Initializing detection models...")
         try:
-            pose_model = YoloTensorRTEngine("/app/models/yolo26m-pose.engine", conf_thres=0.25)
-            smoking_model = YoloTensorRTEngine("/app/models/smoking_26m.engine", conf_thres=0.3)
+            detector_cfg = ai_config.get("detector", {})
+            presence_backend = detector_cfg.get("presence_backend", "yolo").lower()
+            presence_conf = float(detector_cfg.get("presence_conf", 0.25))
+            fallback_yolo_path = detector_cfg.get("fallback_yolo_engine_path", "/app/models/yolo26m-pose.engine")
+            if presence_backend == "rfdetr_trt":
+                try:
+                    presence_engine_path = detector_cfg.get("presence_engine_path", "/app/models/rf-detr-fp16-576.engine")
+                    person_class_id = int(detector_cfg.get("person_class_id", 0))
+                    max_det = int(detector_cfg.get("max_det", 100))
+                    pose_model = RFDETRTensorRTEngine(
+                        presence_engine_path,
+                        conf_thres=presence_conf,
+                        person_class_id=person_class_id,
+                        max_det=max_det
+                    )
+                    presence_detector_source = "rf-detr-trt"
+                except Exception as e:
+                    print(f"RF-DETR init failed, fallback to YOLO: {e}")
+                    pose_model = YoloTensorRTEngine(fallback_yolo_path, conf_thres=presence_conf)
+                    presence_detector_source = "yolo26m-pose"
+            else:
+                presence_engine_path = detector_cfg.get("presence_engine_path", fallback_yolo_path)
+                pose_model = YoloTensorRTEngine(presence_engine_path, conf_thres=presence_conf)
+                presence_detector_source = "yolo26m-pose"
+
+            smoking_engine_path = detector_cfg.get("smoking_engine_path", "/app/models/smoking_26m.engine")
+            smoking_conf = float(detector_cfg.get("smoking_conf", 0.3))
+            smoking_model = YoloTensorRTEngine(smoking_engine_path, conf_thres=smoking_conf)
             print("Models loaded successfully.")
         except Exception as e:
             print(f"Failed to load TensorRT engines: {e}")
-            print("Did you compile them to /app/models/yolo26m-pose.engine and smoking_26m.engine ?")
+            print("Please check detector config and engine files under /app/models")
 
 # --- MQTT Setup ---
 MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
@@ -195,7 +223,7 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
             "images": image_paths,
             "raw_payload": raw_payload or {
                 "result": "occupied" if has_person else "empty",
-                "source": "yolo26m+gemma",
+                "source": f"{presence_detector_source}+gemma",
                 "decision_chain": decision_chain or [],
                 "yolo_count": yolo_count
             }
@@ -381,16 +409,16 @@ def process_camera(cam_id, cam_info):
                     cv2.putText(annotated_frame, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
                     if yolo_count > 0:
-                        decision_chain.append(f"YOLO 检测到 {yolo_count} 个候选目标")
+                        decision_chain.append(f"Detector 检测到 {yolo_count} 个候选目标")
                         for b in boxes:
                             x1, y1, x2, y2 = b['bbox']
                             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                            cv2.putText(annotated_frame, f"YOLO: {b['conf']:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                            cv2.putText(annotated_frame, f"DET: {b['conf']:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                         
                         max_conf = max([b['conf'] for b in boxes])
                         prompt = "这幅办公场景图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
                     else:
-                        decision_chain.append("YOLO 未检测到人员，提交全图兜底复核")
+                        decision_chain.append("Detector 未检测到人员，提交全图兜底复核")
                         max_conf = 0.0
                         prompt = "仔细观察这幅全景图像，画面中是否藏有真实的、活着的人？请回答 YES 或 NO。"
                     
@@ -408,7 +436,7 @@ def process_camera(cam_id, cam_info):
                         if yolo_count > 0:
                             decision_chain.append("Gemma 复核: 确认红框内为真实人员")
                         else:
-                            decision_chain.append("Gemma 复核: YOLO漏报，但Gemma在全图中发现了人员")
+                            decision_chain.append("Gemma 复核: Detector漏报，但Gemma在全图中发现了人员")
                         log_info(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {yolo_count}个)")
                     else:
                         if yolo_count > 0:
@@ -430,7 +458,7 @@ def process_camera(cam_id, cam_info):
                             "result": final_status, # occupied / empty
                             "windowMinutes": window_mins,
                             "timePeriod": time_period,
-                            "source": "yolo26m+gemma",
+                            "source": f"{presence_detector_source}+gemma",
                             "timestamp": datetime.now().isoformat()
                         }
                         

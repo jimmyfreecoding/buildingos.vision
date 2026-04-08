@@ -53,5 +53,19 @@
         "state_patience": 110,
         "smoking_specialist_conf": 0.25,
         "pose_heuristic_threshold": 0.4
+    },
+    "ai_engine": {
+        "zlm_http_port": 10081,
+        "zlm_rtsp_port": 10554,
+        "detector": {
+            "presence_backend": "rfdetr_trt",
+            "presence_engine_path": "/app/models/rf-detr-fp16-576.engine",
+            "fallback_yolo_engine_path": "/app/models/yolo26m-pose.engine",
+            "presence_conf": 0.25,
+            "person_class_id": 0,
+            "max_det": 100,
+            "smoking_engine_path": "/app/models/smoking_26m.engine",
+            "smoking_conf": 0.3
+        }
     }
 }
