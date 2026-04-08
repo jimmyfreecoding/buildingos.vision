@@ -624,6 +624,9 @@ def register_cameras_to_zlm():
                     # 播放地址同样需要自适应转换显示
                     play_url = get_real_url(f"rtsp://zlm:554/live/{cam_id}")
                     print(f"[{cam_id}] ZLM Proxy configured. Live at {play_url}")
+                elif "already exists" in res_data.get("msg", ""):
+                    # 忽略已存在的报错，静默成功
+                    pass
                 else:
                     print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}")
         except Exception as e:

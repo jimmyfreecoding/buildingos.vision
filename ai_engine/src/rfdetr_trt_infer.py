@@ -44,6 +44,7 @@ class RFDETRTensorRTEngine:
         self.bindings = []
 
         self._init_io()
+        print(f"✅ RF-DETR Engine Loaded: {engine_path}")
 
     def _init_io(self):
         trt = self.trt

@@ -179,6 +179,11 @@ pip install -U pip
 pip install -r requirements.txt
 # 5. 手动安装 pycuda (确保环境变量生效)
 pip install pycuda==2024.1.2
+
+# 6. 修复共享目录权限 (核心: 确保宿主 ai-engine 有权写入 ZLM 日志目录)
+mkdir -p ~/buildingos.vision/zlm/www/occupancy_logs
+sudo chown -R buildingos:buildingos ~/buildingos.vision/zlm/www/occupancy_logs
+sudo chmod -R 775 ~/buildingos.vision/zlm/www/occupancy_logs
 ```
 
 ### 6.2 安装并启动 systemd 服务
@@ -204,6 +209,9 @@ journalctl -u ai-engine -f
 
 - `ai-engine` 在宿主机运行后，访问宿主本机服务可直接 `127.0.0.1`。
 - 访问 Docker 内服务时，使用对外映射端口（例如宿主机 `10081` 对应 `zlm:80`）。
+- **代码自适应逻辑**：代码中已内置 `get_real_url` 等助手函数，会自动处理：
+  - `zlm:80` -> `127.0.0.1:10081`
+  - `host.docker.internal` -> `127.0.0.1`
 - 容器访问宿主的 `host.docker.internal` 规则继续保留给容器侧使用，不影响宿主侧。
 
 ---
@@ -251,7 +259,11 @@ export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH && \
 .venv/bin/pip install -U pip && \
 .venv/bin/pip install -r requirements.txt && \
 .venv/bin/pip install pycuda==2024.1.2 && \
-# 4. 安装并启动 systemd 服务
+# 4. 修复共享目录权限 (提前创建目录以防 chown 失败)
+mkdir -p ~/buildingos.vision/zlm/www/occupancy_logs && \
+sudo chown -R buildingos:buildingos ~/buildingos.vision/zlm/www/occupancy_logs && \
+sudo chmod -R 775 ~/buildingos.vision/zlm/www/occupancy_logs && \
+# 5. 安装并启动 systemd 服务
 sudo cp ~/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engine.service && \
 sudo systemctl daemon-reload && \
 sudo systemctl enable ai-engine && \
