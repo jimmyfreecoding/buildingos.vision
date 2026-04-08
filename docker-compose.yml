@@ -12,9 +12,15 @@ services:
       # 通过环境变量设置 ZLM 的全局秘钥
       - ZLM_API_SECRET=buildingos_edge_secret_2026
     # 启动前通过 sed 自动将环境变量中的密钥同步到 config.ini 中，实现零接触配置
-    # 注意：因为我们将宿主机的配置文件映射为了只读或者受宿主机权限保护，所以这里将其复制一份到临时目录修改并使用
+    # 注意：根据用户要求，由于 AI Engine 在宿主运行，这里需要确保 ZLM 的 secret 动态注入
+    # 同时强制禁用 HLS 和 MP4 录制功能，解决磁盘占用过大的问题
     command: >
-      sh -c "cp /opt/media/conf/config.ini /tmp/config.ini && sed -i 's/^secret=.*/secret=\'\"$$ZLM_API_SECRET\"\'/g' /tmp/config.ini && /opt/media/bin/MediaServer -c /tmp/config.ini"
+      sh -c "cp /opt/media/conf/config.ini /tmp/config.ini && 
+      sed -i 's/^secret=.*/secret='$$ZLM_API_SECRET'/g' /tmp/config.ini && 
+      sed -i 's/^publishToHls=.*/publishToHls=0/g' /tmp/config.ini && 
+      sed -i 's/^publishToMP4=.*/publishToMP4=0/g' /tmp/config.ini && 
+      sed -i 's/^enable_hls=.*/enable_hls=0/g' /tmp/config.ini && 
+      /opt/media/bin/MediaServer -c /tmp/config.ini"
     volumes:
       - ./zlm/www:/opt/media/www/
       # 挂载配置目录而不是单一文件，防止 sed 修改文件 inode 导致 docker 挂载断裂
