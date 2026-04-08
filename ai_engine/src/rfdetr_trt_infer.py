@@ -118,15 +118,14 @@ class RFDETRTensorRTEngine:
         resized = cv2.resize(img, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # 【重要测试项】
-        # 如果模型分类完全牛头不对马嘴，极有可能是因为输入数据被“双重归一化”成了噪声。
-        # 建议测试：注释掉 mean/std 减法，仅保留 / 255.0
+        # 【核心测试项】
+        # 很多 TensorRT Engine 导出时自带了 Mean/Std，Python 层再做会导致“双重归一化”。
+        # 目前暂时注释掉减均值操作，仅保留 0-1 缩放，排除模型“致盲”可能。
         x = rgb.astype(np.float32) / 255.0
         
-        # 暂时开启：Mean/Std 归一化。
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        x = (x - mean) / std
+        # mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        # std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        # x = (x - mean) / std
         
         x = np.transpose(x, (2, 0, 1))[None, ...]
         
@@ -156,66 +155,94 @@ class RFDETRTensorRTEngine:
         return outputs
 
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h, conf_thres=None):
-        # 1. 寻找 84 列的主输出 (300个预测框，每个框 4坐标 + 80类别)
-        main_tensor = None
-        for v in outputs.values():
-            if v.ndim == 3 and v.shape[-1] >= 84:
-                main_tensor = v[0]
-                break
-        if main_tensor is None: return []
+        """
+        针对 aux1 模型优化的解析逻辑：
+        1. 多头探测：寻找主头 (output0 或 shape[1]==300, shape[2]==84)
+        2. 自动 Sigmoid：如果坐标不在 0-1 之间，尝试对其进行映射
+        """
+        # --- 1. 深度诊断日志 ---
+        print("\n" + "-"*50)
+        print("RF-DETR aux1 ENGINE DIAGNOSTICS")
+        for k, v in outputs.items():
+            print(f"Tensor: {k:20} | Shape: {str(v.shape):15} | Range: [{np.min(v):.2f}, {np.max(v):.2f}]")
+        print("-"*50 + "\n")
 
-        # 调试：观察前 3 个原始框的数值
-        # 如果 cx, cy 大于 1 或小于 0，说明模型输出的不是归一化的比例值
-        print(f"DEBUG RF-DETR Raw Tensor (first 3): \n{main_tensor[:3, :6]}")
+        boxes_raw = None
+        logits_raw = None
 
-        # 1. 拆分坐标和类别概率
-        boxes_raw = main_tensor[:, :4]
-        logits_raw = main_tensor[:, 4:84]
+        # 2. 锁定主头：优先使用 'output0'，否则找 shape[2] >= 84 的张量
+        main_v = None
+        if 'output0' in outputs:
+            main_v = outputs['output0'][0]
+        else:
+            # 兜底：寻找最后一个符合形状的（通常最终头在最后或第一个）
+            for v in outputs.values():
+                if v.ndim == 3 and v.shape[-1] >= 84:
+                    main_v = v[0]
+                    break
         
-        # 强制执行 Sigmoid 以获取分数
+        if main_v is not None:
+            boxes_raw = main_v[:, :4]
+            logits_raw = main_v[:, 4:84]
+        else:
+            # 兼容分离的 boxes 和 scores
+            for k, v in outputs.items():
+                if v.ndim == 3 and v.shape[-1] == 4: boxes_raw = v[0]
+                elif v.ndim == 3 and v.shape[-1] >= 80: logits_raw = v[0]
+
+        if boxes_raw is None or logits_raw is None:
+            print("ERROR: No valid detection heads found!")
+            return []
+
+        # 3. 执行分类分数计算
+        # 强制执行 Sigmoid 以确保分数在 0-1 之间
         scores = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
         
-        # 2. 过滤结果
+        # 4. 坐标自适应解码
+        # 如果坐标数值超出了合理的 [0, 1] 比例范围，极有可能是 Engine 导出时未包含 Sigmoid 映射
+        box_min, box_max = np.min(boxes_raw), np.max(boxes_raw)
+        needs_sigmoid = (box_min < -0.1 or box_max > 1.1)
+        
+        if needs_sigmoid:
+            # 强制映射到 0-1 (DETR 协议)
+            cx_cy_w_h = 1 / (1 + np.exp(-np.clip(boxes_raw, -15, 15)))
+            # print(f"DEBUG: Auto-applied Sigmoid to box coordinates (Range was [{box_min:.2f}, {box_max:.2f}])")
+        else:
+            cx_cy_w_h = boxes_raw
+
+        # 5. 过滤结果
         max_scores = np.max(scores, axis=1)
         max_indices = np.argmax(scores, axis=1)
         
         actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
-        
         results = []
+
         for i in range(len(max_scores)):
             if max_scores[i] >= actual_conf_thres:
-                # 【关键修正】带保护的坐标解码
-                # 即使模型输出的是负数或异常值，我们也强制限制在图像范围内
-                cx, cy, bw, bh = boxes_raw[i]
+                cx, cy, bw, bh = cx_cy_w_h[i]
                 
-                # 如果发现坐标依然不对（如图中万级负数），说明模型输出格式不是 [cx, cy, w, h] 0-1
+                # DETR 标准转换：[cx, cy, w, h] -> [x1, y1, x2, y2]
                 x1 = (cx - bw / 2.0) * orig_w
                 y1 = (cy - bh / 2.0) * orig_h
                 x2 = (cx + bw / 2.0) * orig_w
                 y2 = (cy + bh / 2.0) * orig_h
                 
-                # 边界剪裁与合法性检查
+                # 裁剪与边界保护
                 x1, y1 = max(0, int(x1)), max(0, int(y1))
                 x2, y2 = min(orig_w, int(x2)), min(orig_h, int(y2))
                 
-                # 如果坐标完全越界（例如 x1 > x2），则跳过该框
-                if x1 >= x2 or y1 >= y2:
-                    continue
-
-                cls_id = int(max_indices[i])
-                # 注意：如果出现“类别张冠李戴”，通常是由于 COCO_CLASSES 顺序不匹配
-                # 或者是由于索引位移（例如 0 是背景类，需要 cls_id - 1）
-                results.append({
-                    "bbox": [x1, y1, x2, y2],
-                    "conf": float(max_scores[i]),
-                    "class_id": cls_id,
-                    "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"ID_{cls_id}"
-                })
+                if x1 < x2 and y1 < y2:
+                    cls_id = int(max_indices[i])
+                    results.append({
+                        "bbox": [x1, y1, x2, y2],
+                        "conf": float(max_scores[i]),
+                        "class_id": cls_id,
+                        "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"ID_{cls_id}"
+                    })
         
-        # 记录最显著物体的调试信息
         if results:
             best = max(results, key=lambda x: x['conf'])
-            print(f"RF-DETR Best Detection: {best['class_name']} conf={best['conf']:.3f} bbox={best['bbox']}")
+            print(f"✅ SUCCESS: Detected {best['class_name']} with confidence {best['conf']:.3f}")
             
         return results
 
