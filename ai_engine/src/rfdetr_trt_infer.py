@@ -127,57 +127,92 @@ class RFDETRTensorRTEngine:
         for name in self.output_names:
             meta = self.tensor_meta[name]
             outputs[name] = np.array(meta["host"]).reshape(meta["shape"])
+            # 调试输出形状，帮助确认模型输出格式
+            # print(f"Output [{name}] shape: {meta['shape']}")
         return outputs
 
     def _parse_outputs(self, outputs, scale, pad_x, pad_y, orig_w, orig_h):
         boxes_arr = None
         logits_arr = None
 
+        # 针对 RT-DETR / RF-DETR 的典型输出结构进行查找
+        # 结构 A: [1, 300, 4] boxes 和 [1, 300, 80] logits
         for v in outputs.values():
-            if v.ndim >= 3 and v.shape[-1] == 4 and boxes_arr is None:
-                boxes_arr = v
-            elif v.ndim >= 3 and v.shape[-1] > 4 and logits_arr is None:
-                logits_arr = v
+            if v.ndim == 3:
+                if v.shape[-1] == 4:
+                    boxes_arr = v[0]
+                elif v.shape[-1] > 4:
+                    logits_arr = v[0]
+
+        if boxes_arr is None or logits_arr is None:
+            # 尝试结构 B: 单一合并输出 [1, 300, 84]
+            for v in outputs.values():
+                if v.ndim == 3 and v.shape[-1] > 4:
+                    boxes_arr = v[0, :, :4]
+                    logits_arr = v[0, :, 4:]
+                    break
 
         if boxes_arr is None or logits_arr is None:
             return []
 
-        boxes = boxes_arr.reshape(-1, 4).astype(np.float32)
-        logits = logits_arr.reshape(-1, logits_arr.shape[-1]).astype(np.float32)
+        # RT-DETR 使用 Sigmoid 激活函数处理分类分数
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
 
-        logits = logits - np.max(logits, axis=1, keepdims=True)
-        probs = np.exp(logits) / np.sum(np.exp(logits), axis=1, keepdims=True)
-        person_scores = probs[:, self.person_class_id]
+        scores = sigmoid(logits_arr)
+        person_scores = scores[:, self.person_class_id]
+        
+        # 调试：打印前几个分数的最大值，帮助排查是否是激活函数问题
+        print(f"RF-DETR Inference: Max Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
 
-        if np.max(boxes) <= 1.5:
-            boxes[:, [0, 2]] *= self.input_w
-            boxes[:, [1, 3]] *= self.input_h
+        # 复制一份以防修改原数组
+        boxes = boxes_arr.copy().astype(np.float32)
 
-        if np.mean(boxes[:, 2] >= boxes[:, 0]) < 0.5:
-            cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-            x1 = cx - bw / 2.0
-            y1 = cy - bh / 2.0
-            x2 = cx + bw / 2.0
-            y2 = cy + bh / 2.0
-            boxes = np.stack([x1, y1, x2, y2], axis=1)
+        # 归一化坐标转换 (DETR 通常输出 0-1 之间的 cx, cy, w, h)
+        if np.max(boxes) <= 1.01:
+            # 检查是否是 [cx, cy, w, h] 格式
+            # 启发式：如果 x2 < x1 的比例很高，通常是 cx, cy, w, h
+            if np.mean(boxes[:, 0] < boxes[:, 2]) > 0.8 and np.max(boxes) <= 1.0:
+                # 已经是 x1, y1, x2, y2 归一化格式，直接放大
+                boxes[:, [0, 2]] *= self.input_w
+                boxes[:, [1, 3]] *= self.input_h
+            else:
+                # 转换 [cx, cy, w, h] -> [x1, y1, x2, y2] 并放大
+                cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+                x1 = (cx - bw / 2.0) * self.input_w
+                y1 = (cy - bh / 2.0) * self.input_h
+                x2 = (cx + bw / 2.0) * self.input_w
+                y2 = (cy + bh / 2.0) * self.input_h
+                boxes = np.stack([x1, y1, x2, y2], axis=1)
 
         results = []
-        order = np.argsort(-person_scores)
+        # 按置信度排序
+        indices = np.where(person_scores >= self.conf_thres)[0]
+        if len(indices) == 0:
+            return []
+            
+        filtered_scores = person_scores[indices]
+        filtered_boxes = boxes[indices]
+        
+        order = np.argsort(-filtered_scores)
         for idx in order[: self.max_det]:
-            conf = float(person_scores[idx])
-            if conf < self.conf_thres:
-                continue
-            x1, y1, x2, y2 = boxes[idx]
+            conf = float(filtered_scores[idx])
+            x1, y1, x2, y2 = filtered_boxes[idx]
+            
+            # 还原到原始图像尺寸
             x1 = (x1 - pad_x) / scale
             y1 = (y1 - pad_y) / scale
             x2 = (x2 - pad_x) / scale
             y2 = (y2 - pad_y) / scale
+            
             x1 = int(max(0, min(orig_w - 1, round(x1))))
             y1 = int(max(0, min(orig_h - 1, round(y1))))
             x2 = int(max(0, min(orig_w - 1, round(x2))))
             y2 = int(max(0, min(orig_h - 1, round(y2))))
+            
             if x2 <= x1 or y2 <= y1:
                 continue
+                
             results.append({
                 "bbox": [x1, y1, x2, y2],
                 "conf": conf,

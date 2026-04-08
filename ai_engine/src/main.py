@@ -176,15 +176,15 @@ def init_tensorrt_models():
                         person_class_id=person_class_id,
                         max_det=max_det
                     )
-                    presence_detector_source = "rf-detr-trt"
+                    presence_detector_source = "rf-detr"
                 except Exception as e:
                     print(f"RF-DETR init failed, fallback to YOLO: {e}")
                     pose_model = YoloTensorRTEngine(fallback_yolo_path, conf_thres=presence_conf)
-                    presence_detector_source = "yolo26m-pose"
+                    presence_detector_source = "yolo26m"
             else:
                 presence_engine_path = get_real_path(detector_cfg.get("presence_engine_path", fallback_yolo_path))
                 pose_model = YoloTensorRTEngine(presence_engine_path, conf_thres=presence_conf)
-                presence_detector_source = "yolo26m-pose"
+                presence_detector_source = "yolo26m"
 
             smoking_engine_path = get_real_path(detector_cfg.get("smoking_engine_path", "/app/models/smoking_26m.engine"))
             smoking_conf = float(detector_cfg.get("smoking_conf", 0.3))
@@ -465,11 +465,11 @@ def process_camera(cam_id, cam_info):
                             cv2.putText(annotated_frame, f"DET: {b['conf']:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                         
                         max_conf = max([b['conf'] for b in boxes])
-                        prompt = "这幅办公场景图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
+                        prompt = "这幅图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
                     else:
-                        decision_chain.append("Detector 未检测到人员，提交全图兜底复核")
+                        decision_chain.append("Detector 未检测到人员，提交全图复核")
                         max_conf = 0.0
-                        prompt = "仔细观察这幅全景图像，画面中是否藏有真实的、活着的人？请回答 YES 或 NO。"
+                        prompt = "图中是否有真实的、活着的人（包括坐着、站着或正在操作电脑的人）？请回答 YES 或 NO。"
                     
                     # 无论 YOLO 找没找到框，都送给 Gemma 做最终裁决
                     success, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -552,7 +552,7 @@ def process_camera(cam_id, cam_info):
                                     "result": "confirmed_smoking",
                                     "windowMinutes": config.get("smoke_window_minutes", 2),
                                     "sampleIntervalSeconds": s_interval,
-                                    "source": "yolo26m+gemma",
+                                    "source": f"smoking_specialist+gemma",
                                     "evidenceImageUrl": evidence_url,
                                     "timestamp": datetime.now().isoformat()
                                 }
