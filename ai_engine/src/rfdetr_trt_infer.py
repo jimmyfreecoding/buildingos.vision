@@ -19,6 +19,17 @@ COCO_CLASSES = [
     'hair drier', 'toothbrush'
 ]
 
+# COCO 91 类别到 80 类别的映射 (用于解决 91 类模型的索引偏移)
+# 注意：91 类中索引 1 是人，但在 80 类中索引 0 是人。
+COCO_91_TO_80 = {
+    1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 11: 10, 13: 11, 14: 12, 15: 13, 16: 14, 17: 15,
+    18: 16, 19: 17, 20: 18, 21: 19, 22: 20, 23: 21, 24: 22, 25: 23, 27: 24, 28: 25, 31: 26, 32: 27, 33: 28, 34: 29,
+    35: 30, 36: 31, 37: 32, 38: 33, 39: 34, 40: 35, 41: 36, 42: 37, 43: 38, 44: 39, 46: 40, 47: 41, 48: 42, 49: 43,
+    50: 44, 51: 45, 52: 46, 53: 47, 54: 48, 55: 49, 56: 50, 57: 51, 58: 52, 59: 53, 60: 54, 61: 55, 62: 56, 63: 57,
+    64: 58, 65: 59, 67: 60, 70: 61, 72: 62, 73: 63, 74: 64, 75: 65, 76: 66, 77: 67, 78: 68, 79: 69, 80: 70, 81: 71,
+    82: 72, 84: 73, 85: 74, 86: 75, 87: 76, 88: 77, 89: 78, 90: 79
+}
+
 class RFDETRTensorRTEngine:
     def __init__(self, engine_path, conf_thres=0.25, person_class_id=0, max_det=100):
         self.engine_path = engine_path
@@ -210,20 +221,22 @@ class RFDETRTensorRTEngine:
                 y2 = (cy + bh / 2.0) * orig_h
                 
                 # 5. 类别映射 (91 -> 80)
-                # 简单映射：COCO 91 的索引 1 是 Person (对应 80 类的索引 0)
-                # 目前先显示 ID 以确定偏移
+                # 在 COCO 91 协议中，1 是人，0 是背景。
+                # 我们将其映射回标准的 80 类以正确显示名称。
                 cls_id_91 = int(max_indices_91[i])
+                cls_id_80 = COCO_91_TO_80.get(cls_id_91, -1)
                 
-                results.append({
-                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                    "conf": float(max_scores_91[i]),
-                    "class_id": cls_id_91,
-                    "class_name": f"COCO91_{cls_id_91}" # 临时显示原始 ID 以便校对
-                })
+                if cls_id_80 != -1:
+                    results.append({
+                        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                        "conf": float(max_scores_91[i]),
+                        "class_id": cls_id_80,
+                        "class_name": self.classes[cls_id_80] if cls_id_80 < len(self.classes) else f"ID_{cls_id_80}"
+                    })
         
         if results:
             best = max(results, key=lambda x: x['conf'])
-            print(f"✅ SUCCESS: Detected {best['class_name']} ({best['conf']:.3f}) | Person(idx1) Max: {np.max(p1_scores):.3f}")
+            print(f"✅ SUCCESS: Detected {best['class_name']} ({best['conf']:.3f})")
             
         return results
 
