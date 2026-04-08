@@ -293,76 +293,11 @@ app.post('/api/config', (req, res) => {
         // Save new config
         fs.writeFileSync(CONFIG_PATH, JSON.stringify(newConfig, null, 4), 'utf8');
         
-        // Find deleted streams
-        const oldStreams = [
-            ...(oldConfig.streams?.smoking || []),
-            ...(oldConfig.streams?.occupancy || [])
-        ];
-        const newStreams = [
-            ...(newConfig.streams?.smoking || []),
-            ...(newConfig.streams?.occupancy || [])
-        ];
-        
-        const newStreamIds = new Set(newStreams.map(s => s.id));
-        const zlmSecret = process.env.ZLM_API_SECRET || newConfig.zlm?.secret || "buildingos_edge_secret_2026";
-        
-        // --- Full Synchronization with ZLM ---
-        // Query ZLM for ALL currently active streams, and if any stream in ZLM
-        // is NOT in our newConfig, we force close it.
-        const getMediaListUrl = `http://zlm:80/index/api/getMediaList?secret=${zlmSecret}`;
-        
-        http.get(getMediaListUrl, (zlmRes) => {
-            let data = '';
-            zlmRes.on('data', (chunk) => {
-                data += chunk;
-            });
-            zlmRes.on('end', () => {
-                try {
-                    const zlmResponse = JSON.parse(data);
-                    if (zlmResponse.code === 0 && zlmResponse.data) {
-                        // We only care about unique stream IDs (app=live)
-                        const activeStreamIds = new Set(zlmResponse.data.map(item => item.stream));
-                        
-                        activeStreamIds.forEach(streamId => {
-                            if (!newStreamIds.has(streamId)) {
-                                // This stream exists in ZLM but NOT in our new config! Kill it.
-                                
-                                // Helper to execute HTTP GET for cleanup
-                                const sendZlmCleanup = (url, logMsg) => {
-                                    http.get(url, () => {
-                                        if (logMsg) console.log(logMsg);
-                                    }).on('error', (err) => {
-                                        console.error(`Cleanup failed for ${url}:`, err);
-                                    });
-                                };
-
-                                // Approach 1: Close all active connections for this stream
-                                const closeUrl = `http://zlm:80/index/api/close_streams?secret=${zlmSecret}&app=live&stream=${streamId}&vhost=__defaultVhost__&force=1`;
-                                sendZlmCleanup(closeUrl, `[SYNC] Closing active connections for orphaned stream ${streamId}`);
-
-                                // Approach 2: Delete proxy by iterating through keys
-                                const proxyKey1 = `__defaultVhost__/live/${streamId}`;
-                                const delProxyUrl1 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${proxyKey1}`;
-                                sendZlmCleanup(delProxyUrl1);
-                                
-                                // Approach 3: Sometimes the key is just the stream ID or a hash.
-                                const delProxyUrl2 = `http://zlm:80/index/api/delStreamProxy?secret=${zlmSecret}&key=${streamId}`;
-                                sendZlmCleanup(delProxyUrl2);
-                            }
-                        });
-                    }
-                } catch (parseErr) {
-                    console.error("Failed to parse ZLM media list response:", parseErr);
-                }
-            });
-        }).on('error', (err) => {
-            console.error(`Failed to fetch media list from ZLM for sync:`, err);
-        });
-
+        // Restart AI Engine host service
         exec(`${HOST_NSENTER} systemctl restart ai-engine`, (err) => {
              if (err) console.error("Failed to restart ai-engine host service:", err);
         });
-        res.json({ message: 'Config saved successfully, deleted streams cleared from ZLM, and ai-engine service restarted.' });
+        res.json({ message: 'Config saved successfully and ai-engine service restarted.' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

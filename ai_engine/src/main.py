@@ -439,15 +439,64 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
 # 增加一个全局锁防止多个摄像头并发调用 cv2.VideoCapture() 导致 GStreamer 崩溃
 cv2_open_lock = threading.Lock()
 
+import subprocess
+import random
+
+# --- Host FFmpeg Snapshot Helper ---
+def get_frame_from_host_ffmpeg(cam_id):
+    """
+    直接在宿主机调用 ffmpeg 进程抓取 ZLM 转发的 RTSP 流。
+    这种方式无状态、无缓存，且强制使用 TCP 传输，能保证 100% 画面完整。
+    """
+    # 宿主机上 ZLM 转发的 RTSP 地址
+    local_rtsp_url = f"rtsp://127.0.0.1:{ZLM_RTSP_PORT}/live/{cam_id}"
+    tmp_snap_path = f"/tmp/snap_{cam_id}_{int(time.time())}.jpg"
+    
+    # 构造 ffmpeg 命令
+    # -rtsp_transport tcp: 强制使用 TCP，防止 UDP 丢包导致花屏
+    # -y: 覆盖输出文件
+    # -i: 输入流
+    # -frames:v 1: 只截取一帧
+    # -f image2: 输出格式为图片
+    cmd = [
+        "ffmpeg", 
+        "-rtsp_transport", "tcp", 
+        "-y", 
+        "-i", local_rtsp_url, 
+        "-frames:v", "1", 
+        "-f", "image2", 
+        tmp_snap_path
+    ]
+    
+    try:
+        # 执行抓拍，设置 15 秒超时防止卡死
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        
+        if result.returncode == 0 and os.path.exists(tmp_snap_path):
+            frame = cv2.imread(tmp_snap_path)
+            # 及时清理临时文件
+            try:
+                os.remove(tmp_snap_path)
+            except:
+                pass
+            return frame
+        else:
+            log_info(f"[{cam_id}] FFmpeg 抓拍失败: {result.stderr.decode() if result.stderr else 'Unknown error'}")
+            return None
+    except subprocess.TimeoutExpired:
+        log_info(f"[{cam_id}] FFmpeg 抓拍超时 (15s)")
+        return None
+    except Exception as e:
+        log_info(f"[{cam_id}] FFmpeg 抓拍异常: {e}")
+        return None
+
 def process_camera(cam_id, cam_info):
     """
     针对每个摄像头运行的独立采样线程。
-    1. 清理 OpenCV 缓存以确保抓到的是当前最新帧。
-    2. 执行推理并上报结果。
+    核心逻辑：使用宿主机 FFmpeg 进行定时无状态抓拍。
     """
     global presence_detector_source
     
-    rtsp_url = cam_info.get("url")
     area_code = cam_info.get("areaCode", "UNKNOWN")
     enabled = cam_info.get("enabled", True)
 
@@ -455,9 +504,9 @@ def process_camera(cam_id, cam_info):
         log_info(f"[{cam_id}] Camera is disabled in config.")
         return
 
-    log_info(f"[{cam_id}] Starting timer-based inference thread...")
+    log_info(f"[{cam_id}] Starting host-ffmpeg sampling thread...")
 
-    # 初始化两套状态机
+    # 初始化状态机
     if cam_id not in presence_machines:
         presence_machines[cam_id] = PresenceStateMachine(cam_id, config)
     if cam_id not in smoking_machines:
@@ -474,64 +523,36 @@ def process_camera(cam_id, cam_info):
     p_interval = config.get("presence_sample_interval_seconds", 60)
     s_interval = config.get("smoke_sample_interval_seconds", 20)
     
-    # 我们用一个主循环，每秒检查一次是否到了该抓拍的时间
+    # 错峰采样延迟，防止并发调用 ffmpeg 进程导致 CPU 瞬间爆表
+    stagger_delay = random.uniform(0, 5)
+    log_info(f"[{cam_id}] 采样错峰延迟: {stagger_delay:.2f}s")
+    time.sleep(stagger_delay)
+
     last_p_time = 0
     last_s_time = 0
 
-    # 尝试连接视频流
-    # 我们应该等 ZLM 代理配置生效后再去连接，否则一启动马上连接会报 404
-    # 在主循环里处理连接
-    cap = cv2.VideoCapture()
-    
     while True:
         try:
             now = time.time()
             need_p_sample = has_presence_task and (now - last_p_time) >= p_interval
             
-            # Smoking 仅在小窗口激活时才执行采样 (如果没有开启 Presence，默认持续激活 Smoking，因为没有门控)
-            if has_presence_task:
-                is_smoke_active = s_sm.check_window_active()
-            else:
-                is_smoke_active = True
-                
+            # Smoking 仅在窗口激活时执行
+            is_smoke_active = s_sm.check_window_active() if has_presence_task else True
             need_s_sample = has_smoking_task and is_smoke_active and ((now - last_s_time) >= s_interval)
 
             if need_p_sample or need_s_sample:
-                # 如果连接断开，尝试重连
-                if not cap.isOpened():
-                    with cv2_open_lock:
-                        # 取消硬编码 cv2.CAP_FFMPEG 后端。
-                        # l4t-ml OpenCV 版本支持 GStreamer，FFMPEG在处理网络流名字时可能会报错 "can't be used to capture by name"
-                        cap.open(rtsp_url) 
-                    if not cap.isOpened():
-                        log_info(f"[{cam_id}] 无法连接到视频流: {rtsp_url}")
-                        time.sleep(5)
-                        continue
+                # 使用宿主机本地 FFmpeg 抓拍
+                frame = get_frame_from_host_ffmpeg(cam_id)
                 
-                # 读取一帧 (必须真正抛弃堆积的缓存帧，使用 grab 循环)
-                # 解决展示图时间戳滞后（比如 15:29 看到 14:12 的图）的问题
-                try:
-                    # 使用 grab 抛弃多余帧，只 decode 最后一帧 (假设缓冲区深度不会超过 15 帧)
-                    for _ in range(15): 
-                        cap.grab()
-                    ret, frame = cap.retrieve()
-                except Exception as e:
-                    log_info(f"[{cam_id}] cap.read() 崩溃: {e}")
-                    ret = False
-                    frame = None
-                
-                if not ret or frame is None:
-                    log_info(f"[{cam_id}] 读取视频流失败，准备重连...")
-                    cap.release()
+                if frame is None:
+                    time.sleep(5)
                     continue
                 
-                # --- 延迟加载模型 ---
-                # 在确保流能读出第一帧之后，才去初始化 TensorRT 模型
-                # 避免 OpenCV 的 GStreamer 初始化与 TensorRT C++ 引擎抢占底层内存指针导致 double free
+                # 预热初始化 TensorRT (如果是首次)
                 init_tensorrt_models()
                 
                 # --- 1. Presence (人员存在) 综合判定流程 ---
-                if need_p_sample and pose_model:
+                if need_p_sample:
                     last_p_time = now
                     
                     # RF-DETR/YOLO 一级判定
