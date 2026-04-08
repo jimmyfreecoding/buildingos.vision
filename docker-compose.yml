@@ -111,7 +111,7 @@ services:
       - /tmp:/host_tmp:ro
       # 修复：直接将宿主机的配置文件目录挂载进来，不使用命名卷以避免初始化为空
       - ./ai_engine/config:/app/ai_engine/config
-      - zlm_www_data:/app/www # 挂载静态文件目录以读取算法日志
+      - ./zlm/www:/app/www # 关键修复：从命名卷改为绑定挂载，确保能读取到 ZLM 实时数据和日志
     restart: always
 
   # Docker Compose 可视化管理 (Dockge)

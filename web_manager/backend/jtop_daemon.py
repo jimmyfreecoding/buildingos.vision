@@ -194,6 +194,8 @@ def main():
                 fd, temp_path = tempfile.mkstemp(dir='/tmp')
                 with os.fdopen(fd, 'w') as f:
                     json.dump(status, f)
+                # 确保权限允许其他用户（如容器内用户）读取
+                os.chmod(temp_path, 0o644)
                 os.replace(temp_path, OUTPUT_FILE)
 
             except Exception as e:

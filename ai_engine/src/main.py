@@ -544,8 +544,9 @@ def register_cameras_to_zlm():
             continue
             
         # 注意：这里调用的是宿主机或者 Docker 内部网络名
-        # 因为我们是在 docker-compose 里跑的，所以使用容器名 `zlm` 作为 HTTP 地址，而不是 127.0.0.1
-        api_url = f"http://zlm:80/index/api/addStreamProxy"
+        # 由于 ai-engine 运行在宿主机，必须使用 127.0.0.1 和映射出来的 10081 端口
+        zlm_api_base = config.get("zlm", {}).get("api_url", "http://127.0.0.1:10081/index/api").replace("/index/api", "")
+        api_url = f"{zlm_api_base}/index/api/addStreamProxy"
         params = {
             "secret": ZLM_API_SECRET,
             "vhost": "__defaultVhost__",
@@ -565,7 +566,7 @@ def register_cameras_to_zlm():
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
                 if res_data.get("code") == 0:
-                    print(f"[{cam_id}] ZLM Proxy configured. Live at rtsp://zlm:554/live/{cam_id}")
+                    print(f"[{cam_id}] ZLM Proxy configured. Live at rtsp://127.0.0.1:{ZLM_RTSP_PORT}/live/{cam_id}")
                 else:
                     print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}")
         except Exception as e:
