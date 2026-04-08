@@ -101,7 +101,7 @@ def get_unified_cameras(cfg):
         if not cam_id: continue
         cameras[cam_id] = {
             "source_url": cam.get("source_url"),
-            "url": get_real_url(cam.get("url"), ZLM_HTTP_PORT), # 这是内部 zlm 的代理地址，需自适应
+            "url": get_real_url(cam.get("url"), config.get("ai_engine", {}).get("zlm_http_port", 10081)), # 需自适应
             "areaCode": cam.get("areaCode", "UNKNOWN"),
             "enabled": True,
             "tasks": ["presence"]
@@ -118,7 +118,7 @@ def get_unified_cameras(cfg):
         else:
             cameras[cam_id] = {
                 "source_url": cam.get("source_url"),
-                "url": get_real_url(cam.get("url"), ZLM_HTTP_PORT), # 这是内部 zlm 的代理地址，需自适应
+                "url": get_real_url(cam.get("url"), config.get("ai_engine", {}).get("zlm_http_port", 10081)), # 需自适应
                 "areaCode": cam.get("areaCode", "UNKNOWN"),
                 "enabled": True,
                 "tasks": ["smoking"]
