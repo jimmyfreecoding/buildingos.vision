@@ -159,61 +159,61 @@ class RFDETRTensorRTEngine:
             if v.ndim == 3 and v.shape[-1] >= 84:
                 main_tensor = v[0]
                 break
-        
         if main_tensor is None: return []
 
-        # 【核心破案点】：日志显示前4列包含负数，说明前4列是分数(Logits)，后4列是坐标
-        # 我们采用更稳健的分离逻辑：
-        # 大多数 RF-DETR 导出为 [1, 300, 84] 时，前 80 列是分数，最后 4 列是坐标 [cx, cy, w, h]
-        logits_arr = main_tensor[:, :80]
-        boxes_arr = main_tensor[:, 80:84]
+        # 【核心修正】根据日志 box=[-5.84, ...] 判定：
+        # 之前的逻辑误把分数当成了坐标。
+        # 重新对齐：前 4 列是坐标 [cx, cy, w, h]，后 80 列是类别分数
+        boxes_raw = main_tensor[:, :4]
+        logits_raw = main_tensor[:, 4:84]
         
-        # 2. 激活函数
         def sigmoid(x):
             return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
         
-        scores = sigmoid(logits_arr)
+        # 转换分数
+        scores = sigmoid(logits_raw)
         
-        # 3. 坐标解码
-        boxes = boxes_arr.copy().astype(np.float32)
-        # 自动探测坐标范围
-        is_normalized = np.max(boxes) <= 1.01
+        # --- 自动探测人员索引 ---
+        # 考虑到可能存在的背景类偏移，我们取索引 0 和 索引 1 中的最大值作为人
+        person_scores_idx0 = scores[:, 0]
+        person_scores_idx1 = scores[:, 1]
         
-        # 解码 [cx, cy, w, h] -> [x1, y1, x2, y2]
-        cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-        x1 = cx - bw / 2.0
-        y1 = cy - bh / 2.0
-        x2 = cx + bw / 2.0
-        y2 = cy + bh / 2.0
-        boxes = np.stack([x1, y1, x2, y2], axis=1)
+        # 如果索引 1 的分数显著高于索引 0，说明模型发生了位移
+        if np.max(person_scores_idx1) > np.max(person_scores_idx0) * 2 and np.max(person_scores_idx1) > 0.5:
+            # 自动切换到索引 1 作为人 (有些模型 0 是背景)
+            person_scores = person_scores_idx1
+            # print("DEBUG: Auto-switched person index to 1")
+        else:
+            person_scores = person_scores_idx0
 
+        # 3. 坐标解码：强制将 0-1 映射到像素
+        boxes = boxes_raw.copy().astype(np.float32)
+        # DETR 必选解码：[cx, cy, w, h] -> [x1, y1, x2, y2]
+        cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+        x1 = (cx - bw / 2.0) * orig_w
+        y1 = (cy - bh / 2.0) * orig_h
+        x2 = (cx + bw / 2.0) * orig_w
+        y2 = (cy + bh / 2.0) * orig_h
+        
         # 4. 提取结果
         results = []
         all_max_scores = np.max(scores, axis=1)
         all_max_indices = np.argmax(scores, axis=1)
         
-        # 调试：打印 Top 1 及其坐标，判断是否逻辑归位
+        # 调试：打印真正的最高分物体（不再被负数坐标干扰）
         best_idx = np.argmax(all_max_scores)
         best_cls = all_max_indices[best_idx]
         best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
-        d_x1, d_y1, d_x2, d_y2 = boxes[best_idx]
-        print(f"RF-DETR Detected: {best_name} ({best_cls}) score={all_max_scores[best_idx]:.3f} box=[{d_x1:.2f}, {d_y1:.2f}, {d_x2:.2f}, {d_y2:.2f}]")
+        print(f"RF-DETR Detected: {best_name}({best_cls}) score={all_max_scores[best_idx]:.3f} person_max={np.max(person_scores):.3f}")
 
         indices = np.where(all_max_scores >= self.conf_thres)[0]
         for idx in indices:
             conf = float(all_max_scores[idx])
             cls_id = int(all_max_indices[idx])
-            x1, y1, x2, y2 = boxes[idx]
             
-            if is_normalized:
-                x1, x2 = x1 * orig_w, x2 * orig_w
-                y1, y2 = y1 * orig_h, y2 * orig_h
-            else:
-                x1, x2 = x1 * (orig_w / self.input_w), x2 * (orig_w / self.input_w)
-                y1, y2 = y1 * (orig_h / self.input_h), y2 * (orig_h / self.input_h)
-            
+            # 记录结果
             results.append({
-                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "bbox": [int(x1[idx]), int(y1[idx]), int(x2[idx]), int(y2[idx])],
                 "conf": conf,
                 "class_id": cls_id,
                 "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"cls_{cls_id}"

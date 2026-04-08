@@ -95,7 +95,7 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 切换为极简问答格式，移除引导词防止空响应
+            # 3. 极简指令，强制单词回答
             chat_prompt = (
                 f"<start_of_turn>user\n"
                 f"[img-1]图中是否有真实的、活着的人？请回答 YES 或 NO。<end_of_turn>\n"
@@ -106,12 +106,12 @@ class GemmaReviewQueue:
             payload = {
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.1, 
-                "n_predict": 128,  # 显著增加预测长度，防止模型复读 Prompt 导致内容被截断
+                "temperature": 0.0, 
+                "n_predict": 10,  # 强制极短，逼迫模型直接给出答案
                 "stream": False,
                 "cache_prompt": False,
                 "echo": False,
-                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中是否有"] 
+                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中"] 
             }
             
             # 5. 发起请求
