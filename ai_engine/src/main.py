@@ -771,6 +771,18 @@ def register_cameras_to_zlm():
 if __name__ == "__main__":
     print("Starting AI Engine (Dual-Stage Architecture)...")
     
+    # 检查 ffmpeg 是否存在，防止后续抓拍静默失败
+    import subprocess
+    try:
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        print("\n" + "!"*60)
+        print("CRITICAL ERROR: 'ffmpeg' not found in system PATH!")
+        print("This AI Engine requires FFmpeg to capture snapshots from RTSP streams.")
+        print("Please install FFmpeg on the host system:")
+        print("  sudo apt-get update && sudo apt-get install -y ffmpeg")
+        print("!"*60 + "\n")
+    
     # 注册 ZLM 代理 (项目核心记忆: 动态拉流)
     zlm_thread = threading.Thread(target=register_cameras_to_zlm)
     zlm_thread.start()
