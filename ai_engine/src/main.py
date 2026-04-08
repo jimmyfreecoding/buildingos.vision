@@ -96,6 +96,28 @@ def run_flask():
 def is_in_container():
     return os.path.exists("/.dockerenv")
 
+# 全局变量，记录检测到的 ffmpeg 路径
+FFMPEG_BINARY = "ffmpeg"
+
+def detect_ffmpeg():
+    global FFMPEG_BINARY
+    import shutil
+    
+    # 1. 尝试从 PATH 中获取
+    path_ffmpeg = shutil.which("ffmpeg")
+    if path_ffmpeg:
+        FFMPEG_BINARY = path_ffmpeg
+        return True
+        
+    # 2. 尝试常见绝对路径 (针对宿主机 systemd 环境)
+    common_paths = ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/snap/bin/ffmpeg", "/usr/bin/ffmpeg.exe"]
+    for p in common_paths:
+        if os.path.exists(p):
+            FFMPEG_BINARY = p
+            return True
+            
+    return False
+
 def get_real_path(p):
     """
     自适应路径转换：
@@ -459,7 +481,7 @@ def get_frame_from_host_ffmpeg(cam_id):
     # -frames:v 1: 只截取一帧
     # -f image2: 输出格式为图片
     cmd = [
-        "ffmpeg", 
+        FFMPEG_BINARY, 
         "-rtsp_transport", "tcp", 
         "-y", 
         "-i", local_rtsp_url, 
@@ -772,16 +794,16 @@ if __name__ == "__main__":
     print("Starting AI Engine (Dual-Stage Architecture)...")
     
     # 检查 ffmpeg 是否存在，防止后续抓拍静默失败
-    import subprocess
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
+    if not detect_ffmpeg():
         print("\n" + "!"*60)
-        print("CRITICAL ERROR: 'ffmpeg' not found in system PATH!")
+        print("CRITICAL ERROR: 'ffmpeg' not found in system PATH or common locations!")
         print("This AI Engine requires FFmpeg to capture snapshots from RTSP streams.")
+        print("Current PATH:", os.environ.get("PATH", ""))
         print("Please install FFmpeg on the host system:")
         print("  sudo apt-get update && sudo apt-get install -y ffmpeg")
         print("!"*60 + "\n")
+    else:
+        print(f"✅ FFmpeg detected at: {FFMPEG_BINARY}")
     
     # 注册 ZLM 代理 (项目核心记忆: 动态拉流)
     zlm_thread = threading.Thread(target=register_cameras_to_zlm)
