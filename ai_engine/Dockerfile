@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     python3-pandas \
     python3-scipy \
+    python3-pytorch \
+    python3-torchvision \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -27,7 +29,6 @@ WORKDIR /app
 COPY requirements.txt .
 
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir --extra-index-url https://pypi.jetson-ai-lab.dev/jp6/cu126 torch torchvision && \
     pip3 install --no-cache-dir "numpy<2.0.0" paho-mqtt && \
     pip3 install --no-cache-dir ultralytics --no-deps && \
     pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama sympy polars ultralytics-thop
