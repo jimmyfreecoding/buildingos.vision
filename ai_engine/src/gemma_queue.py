@@ -96,9 +96,10 @@ class GemmaReviewQueue:
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
             # 3. 极简指令，强制单词回答
+            # 使用传入的 prompt 以支持不同任务 (presence/smoking)
             chat_prompt = (
                 f"<start_of_turn>user\n"
-                f"[img-1]图中是否有真实的、活着的人？请回答 YES 或 NO。<end_of_turn>\n"
+                f"[img-1]{prompt}<end_of_turn>\n"
                 f"<start_of_turn>model\n"
             )
             
@@ -111,7 +112,7 @@ class GemmaReviewQueue:
                 "stream": False,
                 "cache_prompt": False,
                 "echo": False,
-                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中"] 
+                "stop": ["<end_of_turn>", "user", "model"] 
             }
             
             # 5. 发起请求
@@ -137,8 +138,14 @@ class GemmaReviewQueue:
                 # 进一步清理：移除可能残留在开头的标点或 IMG-1 标签
                 if answer.startswith(":") or answer.startswith("："):
                     answer = answer[1:].strip()
+                
+                # 如果回答中包含 [IMG-1] 标签（有些模型会复读），取其后的内容
                 if "[IMG-1]" in answer:
-                    answer = answer.split("[IMG-1]")[-1].strip()
+                    parts = answer.split("[IMG-1]")
+                    if len(parts) > 1 and parts[-1].strip():
+                        answer = parts[-1].strip()
+                    else:
+                        answer = parts[0].strip() # 如果在末尾，取前面
                 
                 print(f"DEBUG: Gemma cleaned response: '{answer}'")
                 

@@ -554,34 +554,41 @@ def process_camera(cam_id, cam_info):
                     if yolo_count > 0:
                         decision_chain.append(f"Detector 检测到 {yolo_count} 个候选人员")
                         max_conf = max([b['conf'] for b in person_boxes])
-                        prompt = "这幅图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
                     else:
-                        decision_chain.append("Detector 未检测到人员，提交全图复核")
+                        decision_chain.append("Detector 未检测到人员，准备全图复核")
                         max_conf = 0.0
-                        prompt = "图中是否有真实的、活着的人（包括坐着、站着或正在操作电脑的人）？请回答 YES 或 NO。"
-                    
-                    # 无论 YOLO 找没找到框，都送给 Gemma 做最终裁决
-                    success, buffer = cv2.imencode('.jpg', annotated_frame)
-                    if success:
-                        jpg_bytes = buffer.tobytes()
-                        gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+
+                    # --- 核心改进逻辑 ---
+                    # 1. 如果 Detector 信心极高 (>= 70%)，直接通过，不麻烦 Gemma
+                    if max_conf >= 0.70:
+                        gemma_res = "YES"
+                        decision_chain.append(f"Detector 高置信度({max_conf:.2f})直接确认有人")
                     else:
-                        log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
-                        gemma_res = "NO"
+                        # 2. 否则，送给 Gemma 做最终裁决
+                        # 注意：为了不干扰 Gemma，送给它的是【原始图 frame】，而不是带框的标注图
+                        prompt = "图中是否有真实的、活着的人（包括坐着、站着或正在操作电脑的人）？请回答 YES 或 NO。"
+                        success, buffer = cv2.imencode('.jpg', frame)
+                        if success:
+                            jpg_bytes = buffer.tobytes()
+                            gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+                        else:
+                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
+                            gemma_res = "NO"
                     
                     if gemma_res == "YES":
                         has_person = True
-                        if yolo_count > 0:
-                            decision_chain.append("Gemma 复核: 确认红框内为真实人员")
-                        else:
-                            decision_chain.append("Gemma 复核: Detector漏报，但Gemma在全图中发现了人员")
-                        log_info(f"[{cam_id}] Presence: Gemma 确认有人 (YOLO框: {yolo_count}个)")
+                        if max_conf < 0.70:
+                            if yolo_count > 0:
+                                decision_chain.append("Gemma 复核: 确认图中存在真实人员")
+                            else:
+                                decision_chain.append("Gemma 复核: Detector漏报，但Gemma在全图中发现了人员")
+                        log_info(f"[{cam_id}] Presence: 确认有人 (YOLO框: {yolo_count}个, MaxConf: {max_conf:.2f})")
                     else:
                         if yolo_count > 0:
-                            decision_chain.append("Gemma 复核: 否决 (认定红框为误报/假人)")
+                            decision_chain.append("Gemma 复核: 否决 (认定疑似目标为误报/假人)")
                         else:
                             decision_chain.append("Gemma 复核: 确认全图确实无人")
-                        log_info(f"[{cam_id}] Presence: Gemma 判定无人")
+                        log_info(f"[{cam_id}] Presence: 判定无人")
                     
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
