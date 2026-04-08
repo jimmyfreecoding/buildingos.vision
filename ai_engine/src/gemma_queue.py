@@ -95,21 +95,19 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 切换为极简指令，并强制要求中文或简单 YES/NO。
-            # 为了解决空响应问题，我们让模型必须回答至少一个词。
+            # 3. 切换为极简问答格式，移除引导词防止空响应
             chat_prompt = (
                 f"<start_of_turn>user\n"
                 f"[img-1]图中是否有真实的、活着的人？请回答 YES 或 NO。<end_of_turn>\n"
                 f"<start_of_turn>model\n"
-                f"YES" # 强制预填一个词引导模型输出（如果 server 支持引导），或者保持原样但增加惩罚
             )
             
             # 4. 组装请求体
             payload = {
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.2, # 略微提高温度，防止模型过于死板导致空输出
-                "n_predict": 32,
+                "temperature": 0.1, 
+                "n_predict": 16,
                 "stream": False,
                 "cache_prompt": False,
                 "echo": False,

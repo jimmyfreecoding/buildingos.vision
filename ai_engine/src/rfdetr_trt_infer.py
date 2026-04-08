@@ -118,15 +118,12 @@ class RFDETRTensorRTEngine:
         resized = cv2.resize(img, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # 核心调整：先只尝试 0-1 归一化。
-        # 如果模型内部没做 mean/std，0-1 也会有基本识别率；
-        # 如果模型内部做了，再做一次会导致识别率降为 0。
+        # 核心调整：恢复 Mean/Std 归一化。
+        # 事实证明，如果没有归一化，模型会将床看成马桶（数据分布完全偏离）。
         x = rgb.astype(np.float32) / 255.0
-        
-        # 暂时注释掉 Mean/Std，观察是否恢复人员识别
-        # mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        # std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        # x = (x - mean) / std
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        x = (x - mean) / std
         
         x = np.transpose(x, (2, 0, 1))[None, ...]
         
@@ -193,10 +190,14 @@ class RFDETRTensorRTEngine:
         else:
             scores = logits_arr
             
+        # 4. 坐标解码：支持 [cx, cy, w, h] -> [x1, y1, x2, y2]
         boxes = boxes_arr.copy().astype(np.float32)
         
-        # 强制解码 [cx, cy, w, h] -> [x1, y1, x2, y2]
-        # DETR 模型导出为 TensorRT 时通常输出中心点归一化格式
+        # 核心修复：自动探测坐标是否需要缩放
+        # 如果坐标最大值 > 1.01，说明模型输出的是绝对像素坐标 (0-576)，不需要再乘以 orig_w
+        is_normalized = np.max(boxes) <= 1.01
+        
+        # 解码中心点格式
         cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
         x1 = cx - bw / 2.0
         y1 = cy - bh / 2.0
@@ -204,7 +205,7 @@ class RFDETRTensorRTEngine:
         y2 = cy + bh / 2.0
         boxes = np.stack([x1, y1, x2, y2], axis=1)
 
-        # 4. 提取结果
+        # 5. 提取结果
         results = []
         all_max_scores = np.max(scores, axis=1)
         all_max_indices = np.argmax(scores, axis=1)
@@ -213,7 +214,10 @@ class RFDETRTensorRTEngine:
         best_idx = np.argmax(all_max_scores)
         best_cls = all_max_indices[best_idx]
         best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
-        print(f"RF-DETR Best Det: {best_name} ({best_cls}) score={all_max_scores[best_idx]:.3f}")
+        
+        # 打印第一个框的坐标，判断缩放是否正常
+        d_x1, d_y1, d_x2, d_y2 = boxes[best_idx]
+        print(f"RF-DETR Best Det: {best_name} ({best_cls}) score={all_max_scores[best_idx]:.3f} box=[{d_x1:.2f}, {d_y1:.2f}, {d_x2:.2f}, {d_y2:.2f}] normalized={is_normalized}")
 
         indices = np.where(all_max_scores >= self.conf_thres)[0]
         for idx in indices:
@@ -221,8 +225,13 @@ class RFDETRTensorRTEngine:
             cls_id = int(all_max_indices[idx])
             
             x1, y1, x2, y2 = boxes[idx]
-            x1, x2 = x1 * orig_w, x2 * orig_w
-            y1, y2 = y1 * orig_h, y2 * orig_h
+            if is_normalized:
+                x1, x2 = x1 * orig_w, x2 * orig_w
+                y1, y2 = y1 * orig_h, y2 * orig_h
+            else:
+                # 如果是绝对坐标，需要根据输入尺寸 (576) 缩放到原始尺寸
+                x1, x2 = x1 * (orig_w / self.input_w), x2 * (orig_w / self.input_w)
+                y1, y2 = y1 * (orig_h / self.input_h), y2 * (orig_h / self.input_h)
             
             results.append({
                 "bbox": [int(x1), int(y1), int(x2), int(y2)],
