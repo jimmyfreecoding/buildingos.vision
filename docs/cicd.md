@@ -9,9 +9,11 @@
 
 ### 1.1 服务边界
 
-- **宿主机运行（systemd 托管）**
-  - `ai-engine`
-- **Docker 运行（保持不变）**
+- **宿主机运行 (systemd 托管)**
+  - `ai-engine` (核心推理引擎)
+  - `jtop-daemon` (硬件状态采集)
+  - `llama-gemma` (Gemma 4 复核服务)
+- **Docker 运行 (保持不变)**
   - `zlm`
   - `web-nginx`
   - `web-manager-backend`
@@ -213,17 +215,23 @@ journalctl -u ai-engine -f
 为提高运维效率，下述指令封装了混合架构下的核心操作。
 
 ### 10.1 一键全新部署 (Fresh Deployment)
-适用于新设备初始化。执行前请确保已拉取代码。
+适用于新设备初始化或环境重置。
+
 ```bash
 cd ~/buildingos.vision && \
-# 1. 启动 Docker 服务 (不含 ai-engine)
+# 1. 彻底清理环境并拉取最新代码
+deactivate 2>/dev/null || true && \
+rm -rf ai_engine/.venv && \
+git reset --hard HEAD && \
+git pull origin main && \
+# 2. 启动 Docker 服务 (不含 ai-engine)
 docker compose -f docker-compose.yml up -d --build && \
-# 2. 准备 ai-engine 宿主环境
+# 3. 准备 ai-engine 宿主环境
 cd ai_engine && \
 python3 -m venv .venv && \
 .venv/bin/pip install -U pip && \
 .venv/bin/pip install -r requirements.txt && \
-# 3. 安装并启动 systemd 服务
+# 4. 安装并启动 systemd 服务
 sudo cp ~/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engine.service && \
 sudo systemctl daemon-reload && \
 sudo systemctl enable ai-engine && \
@@ -257,6 +265,32 @@ docker builder prune -a -f && \
 docker volume prune -f && \
 # 4. 重新拉起服务
 docker compose up -d
+```
+
+### 10.4 辅助服务一键启停 (Supporting Services)
+管理硬件监控与 AI 复核服务。
+
+**一键启动所有辅助服务：**
+```bash
+sudo systemctl start jtop-daemon llama-gemma && \
+sudo systemctl status jtop-daemon llama-gemma --no-pager
+```
+
+**一键停止所有辅助服务：**
+```bash
+sudo systemctl stop jtop-daemon llama-gemma && \
+sudo systemctl status jtop-daemon llama-gemma --no-pager
+```
+
+**辅助服务安装/重置：**
+```bash
+# 复制服务文件
+sudo cp ~/buildingos.vision/deploy/jtop-daemon.service /etc/systemd/system/ && \
+sudo cp ~/buildingos.vision/deploy/llama-gemma.service /etc/systemd/system/ && \
+# 重新加载并启用
+sudo systemctl daemon-reload && \
+sudo systemctl enable jtop-daemon llama-gemma && \
+sudo systemctl restart jtop-daemon llama-gemma
 ```
 
 ---

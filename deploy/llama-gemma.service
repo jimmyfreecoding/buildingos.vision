@@ -1,0 +1,14 @@
+[Unit]
+Description=llama.cpp Gemma 4 Review Service
+After=network.target
+
+[Service]
+Type=simple
+User=buildingos
+WorkingDirectory=/home/buildingos/ai/llama.cpp/build/bin
+ExecStart=/home/buildingos/buildingos.vision/scripts/llama-gemma-start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
