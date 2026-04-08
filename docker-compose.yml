@@ -14,12 +14,15 @@ services:
     # 启动前通过 sed 自动将环境变量中的密钥同步到 config.ini 中，实现零接触配置
     # 注意：根据用户要求，由于 AI Engine 在宿主运行，这里需要确保 ZLM 的 secret 动态注入
     # 同时强制禁用 HLS 和 MP4 录制功能，解决磁盘占用过大的问题
+    # 修复：使用单引号包裹变量，确保在 sh -c 中能正确解析，并增加对 ffmpeg 路径的检查
     command: >
       sh -c "cp /opt/media/conf/config.ini /tmp/config.ini && 
       sed -i 's/^secret=.*/secret='$$ZLM_API_SECRET'/g' /tmp/config.ini && 
       sed -i 's/^publishToHls=.*/publishToHls=0/g' /tmp/config.ini && 
       sed -i 's/^publishToMP4=.*/publishToMP4=0/g' /tmp/config.ini && 
       sed -i 's/^enable_hls=.*/enable_hls=0/g' /tmp/config.ini && 
+      sed -i 's|^bin=.*|bin=/usr/bin/ffmpeg|g' /tmp/config.ini && 
+      sed -i 's|^snap=.*|snap=%s -rtsp_transport tcp -i %s -y -f mjpeg -t 0.001 %s|g' /tmp/config.ini && 
       /opt/media/bin/MediaServer -c /tmp/config.ini"
     volumes:
       - ./zlm/www:/opt/media/www/
