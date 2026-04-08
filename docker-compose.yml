@@ -48,7 +48,7 @@ services:
       context: ./ai_engine
       dockerfile: Dockerfile
       args:
-        L4T_ML_IMAGE: nvcr.io/nvidia/l4t-ml:r36.2.0-py3
+        L4T_ML_IMAGE: nvcr.io/nvidia/l4t-jetpack:r36.4.0
     runtime: nvidia
     deploy:
       resources:

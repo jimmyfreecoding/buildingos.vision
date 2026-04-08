@@ -15,7 +15,7 @@
 - `docker compose` 中 `ai-engine` 已挂载：
   - `./ai_engine/models:/app/models`
   - `./scripts:/app/scripts:ro`
-- `ai_engine` 镜像默认使用 `nvcr.io/nvidia/l4t-ml:r36.2.0-py3`（该仓库当前可拉取标签）
+- 主容器切换为 `nvcr.io/nvidia/l4t-jetpack:r36.4.0`（对齐 TensorRT 10.x）
 
 升级容器 TensorRT 版本：
 

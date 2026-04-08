@@ -1,6 +1,6 @@
-# 使用可配置的 JetPack 6.x 官方机器学习基础镜像
-# 注意：当前 NGC 可用稳定标签为 r36.2.0-py3（r36.4.0-py3 在 l4t-ml 仓库不存在）
-ARG L4T_ML_IMAGE=nvcr.io/nvidia/l4t-ml:r36.2.0-py3
+# 使用可配置的 JetPack 6.x 官方基础镜像
+# 生产切换到 l4t-jetpack:r36.4.0，以对齐宿主机 TensorRT 10.x
+ARG L4T_ML_IMAGE=nvcr.io/nvidia/l4t-jetpack:r36.4.0
 FROM ${L4T_ML_IMAGE}
 
 # 环境变量设置
@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     wget \
     curl \
+    python3-pip \
+    python3-dev \
     python3-pandas \
     python3-scipy \
     && rm -rf /var/lib/apt/lists/*
@@ -24,10 +26,8 @@ WORKDIR /app
 # 复制依赖文件并安装 Python 包
 COPY requirements.txt .
 
-# 关键：由于 l4t-ml 镜像已经包含了完美适配 Jetson GPU 的 torch 和 torchvision，
-# 如果直接 pip install ultralytics，它可能会尝试去下载 x86/标准版的 torch 覆盖掉它。
-# 所以我们只更新 pip，并安装除了 torch 以外的依赖，或者让 ultralytics 忽略 torch 依赖
 RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir --extra-index-url https://pypi.jetson-ai-lab.dev/jp6/cu126 torch torchvision && \
     pip3 install --no-cache-dir "numpy<2.0.0" paho-mqtt && \
     pip3 install --no-cache-dir ultralytics --no-deps && \
     pip3 install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama sympy polars ultralytics-thop
