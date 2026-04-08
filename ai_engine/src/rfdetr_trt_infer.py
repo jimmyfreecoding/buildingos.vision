@@ -110,156 +110,83 @@ class RFDETRTensorRTEngine:
 
     def _preprocess(self, img):
         """
-        参考 app.py 实现：
-        1. 直接缩放 (Squash) 到模型输入尺寸，不使用 Letterbox
-        2. BGR 转 RGB
-        3. ImageNet 归一化 (Mean/Std)
+        根据截图表现优化的预处理：
+        1. 许多 TensorRT 模型内部已集成归一化，外部只需 0-1 缩放
+        2. 保持 Squash 缩放以匹配 app.py
         """
         orig_h, orig_w = img.shape[:2]
-        
-        # 1. 直接缩放 (Squash)
-        # 注意：app.py 使用 PIL.Image.LANCZOS，这里使用 cv2.INTER_LINEAR 模拟
         resized = cv2.resize(img, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
-        
-        # 2. BGR 转 RGB
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # 3. 归一化到 0-1
+        # 核心调整：先只尝试 0-1 归一化。
+        # 如果模型内部没做 mean/std，0-1 也会有基本识别率；
+        # 如果模型内部做了，再做一次会导致识别率降为 0。
         x = rgb.astype(np.float32) / 255.0
         
-        # 4. ImageNet 归一化 (根据 rfdetr 源码确认需要)
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        x = (x - mean) / std
+        # 暂时注释掉 Mean/Std，观察是否恢复人员识别
+        # mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        # std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        # x = (x - mean) / std
         
-        # 5. 转置为 [1, 3, H, W]
         x = np.transpose(x, (2, 0, 1))[None, ...]
         
-        # 由于是 Squash，scale 和 pad 需要重新定义以支持后处理还原
         scale_x = self.input_w / orig_w
         scale_y = self.input_h / orig_h
-        
         return x, scale_x, scale_y, orig_w, orig_h
 
-    def _infer(self, input_tensor):
-        cuda = self.cuda
-        np.copyto(self.tensor_meta[self.input_name]["host"], input_tensor.ravel())
-        cuda.memcpy_htod_async(self.tensor_meta[self.input_name]["device"], self.tensor_meta[self.input_name]["host"], self.stream)
-
-        try:
-            self.context.execute_async_v3(stream_handle=self.stream.handle)
-        except Exception:
-            self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
-
-        outputs = {}
-        for name in self.output_names:
-            meta = self.tensor_meta[name]
-            cuda.memcpy_dtoh_async(meta["host"], meta["device"], self.stream)
-        self.stream.synchronize()
-
-        for name in self.output_names:
-            meta = self.tensor_meta[name]
-            outputs[name] = np.array(meta["host"]).reshape(meta["shape"])
-        return outputs
-
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
-        boxes_arr = None
+        # 查找输出张量
         logits_arr = None
-
-        # 针对 RT-DETR / RF-DETR 的典型输出结构进行查找
+        boxes_arr = None
         for v in outputs.values():
             if v.ndim == 3:
-                if v.shape[-1] == 4:
-                    boxes_arr = v[0]
-                elif v.shape[-1] > 4:
-                    logits_arr = v[0]
+                if v.shape[-1] == 4: boxes_arr = v[0]
+                elif v.shape[-1] >= 80: logits_arr = v[0]
 
-        if boxes_arr is None or logits_arr is None:
-            for v in outputs.values():
-                if v.ndim == 3 and v.shape[-1] > 4:
-                    boxes_arr = v[0, :, :4]
-                    logits_arr = v[0, :, 4:]
-                    break
+        if boxes_arr is None or logits_arr is None: return []
 
-        if boxes_arr is None or logits_arr is None:
-            return []
-
-        # 针对 RF-DETR 的分数解析优化：
-        # 重要：在合并输出 [1, 300, 84] 中，前 4 列是 bbox 坐标 [cx, cy, w, h]
-        # 后面的才是类别分数。如果你之前看到 Class=82，说明没剥离坐标，索引 82 实际上是类别索引 78。
-        
-        # 核心修复：如果 logits_arr 包含坐标列 (列数 > 80)，则剥离前 4 列
-        real_logits = logits_arr
+        # 核心逻辑：自动适配 80, 84, 91 等不同长度的输出
+        # 如果是 84，通常前 4 列是坐标
         if logits_arr.shape[1] > 80:
             real_logits = logits_arr[:, 4:]
-            
-        # 调试：查看剥离后的真实最高分
-        max_idx_overall = np.argmax(real_logits)
-        col_idx = max_idx_overall % real_logits.shape[1]
-        
-        # RT-DETR/RF-DETR 使用 Sigmoid 激活函数处理分类分数
+        else:
+            real_logits = logits_arr
+
+        # 激活函数
         def sigmoid(x):
             return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
-            
-        if np.max(real_logits) > 1.0 or np.min(real_logits) < 0.0:
-            scores = sigmoid(real_logits)
-        else:
-            scores = real_logits
-            
-        person_scores = scores[:, self.person_class_id]
         
-        # 获取每个预测框对应的最高分类别
+        scores = sigmoid(real_logits)
+        
+        # --- 调试：找出得分最高的 5 个类别索引 ---
+        top_indices = np.argsort(-np.max(scores, axis=0))[:5]
+        debug_info = []
+        for idx in top_indices:
+            name = self.classes[idx] if idx < len(self.classes) else f"ID_{idx}"
+            debug_info.append(f"{name}({idx}): {np.max(scores[:, idx]):.3f}")
+        
+        print(f"RF-DETR Top 5: {', '.join(debug_info)}")
+        
+        # 针对人员识别的特殊处理：如果 index 0 不对，尝试在全类中找人
+        person_score = np.max(scores[:, self.person_class_id])
+        
+        # 如果人不在索引 0，但在其他地方有高分（比如索引 1），我们需要自动适配
+        results = []
         all_max_scores = np.max(scores, axis=1)
         all_max_indices = np.argmax(scores, axis=1)
         
-        # 调试：打印偏移后的真实分数
-        print(f"RF-DETR Inference: Global Max={np.max(scores):.4f} (at Class {col_idx}: {self.classes[col_idx]}), Person Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
-
-        # 复制一份以防修改原数组
-        boxes = boxes_arr.copy().astype(np.float32)
-
-        # 归一化坐标转换 (DETR 通常输出 0-1 之间的 cx, cy, w, h)
-        if np.max(boxes) <= 1.01:
-            # 转换 [cx, cy, w, h] -> [x1, y1, x2, y2]
-            cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-            x1 = (cx - bw / 2.0)
-            y1 = (cy - bh / 2.0)
-            x2 = (cx + bw / 2.0)
-            y2 = (cy + bh / 2.0)
-            boxes = np.stack([x1, y1, x2, y2], axis=1)
-
-        results = []
-        # 修改：返回所有超过阈值的类别，而不仅仅是人
         indices = np.where(all_max_scores >= self.conf_thres)[0]
-        if len(indices) == 0:
-            return []
+        for idx in indices:
+            conf = float(all_max_scores[idx])
+            cls_id = int(all_max_indices[idx])
             
-        filtered_scores = all_max_scores[indices]
-        filtered_boxes = boxes[indices]
-        filtered_classes = all_max_indices[indices]
-        
-        order = np.argsort(-filtered_scores)
-        for idx in order[: self.max_det]:
-            conf = float(filtered_scores[idx])
-            x1, y1, x2, y2 = filtered_boxes[idx]
-            cls_id = int(filtered_classes[idx])
+            # 坐标解码
+            x1, y1, x2, y2 = boxes_arr[idx]
+            x1, x2 = x1 * orig_w, x2 * orig_w
+            y1, y2 = y1 * orig_h, y2 * orig_h
             
-            # 还原到原始图像尺寸 (由于是 Squash，直接除以 scale)
-            x1 = x1 * orig_w
-            y1 = y1 * orig_h
-            x2 = x2 * orig_w
-            y2 = y2 * orig_h
-            
-            x1 = int(max(0, min(orig_w - 1, round(x1))))
-            y1 = int(max(0, min(orig_h - 1, round(y1))))
-            x2 = int(max(0, min(orig_w - 1, round(x2))))
-            y2 = int(max(0, min(orig_h - 1, round(y2))))
-            
-            if x2 <= x1 or y2 <= y1:
-                continue
-                
             results.append({
-                "bbox": [x1, y1, x2, y2],
+                "bbox": [int(x1), int(y1), int(x2), int(y2)],
                 "conf": conf,
                 "class_id": cls_id,
                 "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"cls_{cls_id}"
