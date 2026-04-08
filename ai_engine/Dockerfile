@@ -16,12 +16,12 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     wget \
     curl \
+    build-essential \
     python3-pip \
     python3-venv \
     python3-dev \
     python3-pandas \
     python3-scipy \
-    python3-pycuda \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -34,6 +34,7 @@ RUN python3 -m venv --system-site-packages $VENV_PATH && \
     $VENV_PATH/bin/pip install --no-cache-dir --upgrade pip && \
     $VENV_PATH/bin/pip install --no-cache-dir --upgrade --ignore-installed torch torchvision && \
     $VENV_PATH/bin/pip install --no-cache-dir -r requirements.txt && \
+    $VENV_PATH/bin/pip install --no-cache-dir pycuda==2024.1.2 && \
     $VENV_PATH/bin/pip install --no-cache-dir ultralytics --no-deps && \
     $VENV_PATH/bin/pip install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama polars ultralytics-thop && \
     $VENV_PATH/bin/python3 -c "import cv2,numpy,requests,flask,yaml,roboflow,ultralytics,tensorrt,pycuda.driver,paho.mqtt.client"
