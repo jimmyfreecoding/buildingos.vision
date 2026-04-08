@@ -156,81 +156,74 @@ class RFDETRTensorRTEngine:
 
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h, conf_thres=None):
         """
-        深度优化版解析逻辑 (针对 aux1 乱序与堆积问题)：
-        1. 强制坐标与分类全量 Sigmoid。
-        2. 支持 cx,cy,w,h 中心点解码。
-        3. 打印详细原始数值，用于探测背景位偏移。
+        针对 (1, 300, 4) dets 和 (1, 300, 91) labels 的专用解析逻辑：
+        1. 分离张量：dets 为坐标，labels 为分类分数 (Logits)
+        2. 坐标格式：dets 已经是 0-1 范围，不再做 Sigmoid
+        3. 类别偏移：91 类通常包含背景，person 的索引为 1
         """
         # --- 1. 深度诊断日志 ---
         print("\n" + "="*50)
-        print("RF-DETR ENGINE DEEP DIAGNOSTICS")
+        print("RF-DETR 91-CLASS ENGINE DETECTED")
         for k, v in outputs.items():
             print(f"Tensor: {k:15} | Shape: {str(v.shape):15} | Range: [{np.min(v):.2f}, {np.max(v):.2f}]")
         
-        # 寻找主输出头
-        main_v = None
-        if 'output0' in outputs:
-            main_v = outputs['output0'][0]
-        else:
+        # 2. 锁定张量
+        boxes_raw = outputs.get('dets')[0] if 'dets' in outputs else None
+        logits_raw = outputs.get('labels')[0] if 'labels' in outputs else None
+
+        if boxes_raw is None or logits_raw is None:
+            # 兜底：尝试根据形状找
             for v in outputs.values():
-                if v.ndim == 3 and v.shape[-1] >= 84:
-                    main_v = v[0]
-                    break
+                if v.ndim == 3 and v.shape[-1] == 4: boxes_raw = v[0]
+                elif v.ndim == 3 and v.shape[-1] == 91: logits_raw = v[0]
         
-        if main_v is None:
-            print("ERROR: No valid detection heads found!")
+        if boxes_raw is None or logits_raw is None:
+            print("ERROR: Missing 'dets' or 'labels' tensors!")
             return []
 
-        # 打印前 2 个框的原始数据 (前 10 维)，看坐标数值和第一个类别的分数
-        print(f"Raw Vector[0]: {main_v[0, :10]}")
-        print(f"Raw Vector[1]: {main_v[1, :10]}")
-        print("="*50 + "\n")
-
-        # 2. 强制执行 Sigmoid
-        # 针对 Logits 输出的模型，这一步是纠正坐标堆积的关键
-        main_v_sig = 1 / (1 + np.exp(-np.clip(main_v, -15, 15)))
+        # 3. 执行分类分数计算
+        scores_91 = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
         
-        boxes_sig = main_v_sig[:, :4]
-        # 尝试：如果类别依然乱序，可能是索引 4 是背景，真正的类别从 5 开始
-        # 这里先按照标准 COCO (4坐标 + 80类别) 解析，后续通过日志判断是否需要 offset
-        logits_sig = main_v_sig[:, 4:84]
+        # 关键：获取最强的人员(Person)分数
+        # 在 COCO 91 中，1 是人，0 是背景。
+        p1_scores = scores_91[:, 1]
         
-        max_scores = np.max(logits_sig, axis=1)
-        max_indices = np.argmax(logits_sig, axis=1)
+        max_scores_91 = np.max(scores_91, axis=1)
+        max_indices_91 = np.argmax(scores_91, axis=1)
         
         actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
         results = []
 
-        for i in range(len(max_scores)):
-            if max_scores[i] >= actual_conf_thres:
-                cx, cy, bw, bh = boxes_sig[i]
+        for i in range(len(max_scores_91)):
+            if max_scores_91[i] >= actual_conf_thres:
+                # 4. 坐标解码：dets (0-1) 映射到像素
+                # 这种格式通常是 [x1, y1, x2, y2] 或 [cx, cy, w, h]
+                # 尝试：[cx, cy, w, h]
+                cx, cy, bw, bh = boxes_raw[i]
                 
-                # 坐标转换：[cx, cy, w, h] 中心点格式 -> [x1, y1, x2, y2]
+                # 判断格式：如果 x2 < x1 显然不是 x1y1x2y2
+                # 大多数 RF-DETR 导出的 dets 是 [x1, y1, x2, y2]
+                # 但如果还是挤在左上角，我们继续使用中心点转换
                 x1 = (cx - bw / 2.0) * orig_w
                 y1 = (cy - bh / 2.0) * orig_h
                 x2 = (cx + bw / 2.0) * orig_w
                 y2 = (cy + bh / 2.0) * orig_h
                 
-                # 边界剪裁与物理保护
-                x1, y1 = max(0, int(x1)), max(0, int(y1))
-                x2, y2 = min(orig_w, int(x2)), min(orig_h, int(y2))
+                # 5. 类别映射 (91 -> 80)
+                # 简单映射：COCO 91 的索引 1 是 Person (对应 80 类的索引 0)
+                # 目前先显示 ID 以确定偏移
+                cls_id_91 = int(max_indices_91[i])
                 
-                if x1 < x2 and y1 < y2:
-                    cls_id = int(max_indices[i])
-                    # 注意：如果发现“长颈鹿(giraffe)”代表“人”，说明索引向后偏移了
-                    # 后续可通过在这里 cls_id - 1 或 classes 列表头部插入 'background' 修复
-                    results.append({
-                        "bbox": [x1, y1, x2, y2],
-                        "conf": float(max_scores[i]),
-                        "class_id": cls_id,
-                        "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"ID_{cls_id}"
-                    })
+                results.append({
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                    "conf": float(max_scores_91[i]),
+                    "class_id": cls_id_91,
+                    "class_name": f"COCO91_{cls_id_91}" # 临时显示原始 ID 以便校对
+                })
         
         if results:
             best = max(results, key=lambda x: x['conf'])
-            # 这里的打印非常重要：观察第一个类别的分数 p0
-            p0 = logits_sig[np.argmax(max_scores), 0]
-            print(f"SUCCESS: Best Detection {best['class_name']} ({best['conf']:.3f}) | Person(idx0) Score: {p0:.3f}")
+            print(f"✅ SUCCESS: Detected {best['class_name']} ({best['conf']:.3f}) | Person(idx1) Max: {np.max(p1_scores):.3f}")
             
         return results
 
