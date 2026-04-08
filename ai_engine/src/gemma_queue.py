@@ -86,7 +86,7 @@ class GemmaReviewQueue:
     def _call_gemma_api(self, jpg_bytes, prompt):
         """实际发起 HTTP 请求到本地 llama.cpp 部署的 Gemma 服务"""
         try:
-            # 1. 强制在请求前物理清理 Slot 缓存，防止模型受上一帧干扰 (项目记忆 01KNFKT7RT1JDQF7YPEB9XR8GT)
+            # 1. 强制在请求前物理清理 Slot 缓存，防止模型受上一帧干扰
             try:
                 requests.delete(self.gemma_slots_url, timeout=1.0)
             except:
@@ -95,69 +95,65 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 极简指令，强制单词回答
-            # 使用传入的 prompt 以支持不同任务 (presence/smoking)
-            chat_prompt = (
+            # 3. 极简指令：采用 Completion 引导模式，强制关闭推理
+            # 这种格式在 llama.cpp 中比 Chat 格式更能逼迫模型直接给出答案
+            引导式提示词 = (
                 f"<start_of_turn>user\n"
-                f"[img-1]{prompt}<end_of_turn>\n"
+                f"Image: [img-1]\n"
+                f"Instruction: {prompt}\n"
+                f"Constraint: Answer ONLY 'YES' or 'NO'. No reasoning. No explanations.\n"
+                f"<end_of_turn>\n"
                 f"<start_of_turn>model\n"
+                f"Answer: "
             )
             
-            # 4. 组装请求体
+            # 4. 组装请求体：极致精简参数以关闭推理模式并提速
             payload = {
-                "prompt": chat_prompt,
+                "prompt": 引导式提示词,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.0, 
-                "n_predict": 10,  # 强制极短，逼迫模型直接给出答案
+                "temperature": 0.0,   # 绝对确定性
+                "n_predict": 5,       # 极短生成，物理切断 think/reason 模式
                 "stream": False,
                 "cache_prompt": False,
-                "echo": False,
-                "stop": ["<end_of_turn>", "user", "model"] 
+                "echo": False,        # 关键：禁止回显 Prompt
+                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "Instruction", "Answer:", "Question:"] 
             }
             
             # 5. 发起请求
-            resp = requests.post(self.gemma_url, json=payload, timeout=15.0)
+            resp = requests.post(self.gemma_url, json=payload, timeout=10.0)
             
             if resp.status_code == 200:
                 data = resp.json()
-                answer = data.get("content", "").strip().upper()
+                # 优先获取 content，这是响应的核心部分
+                raw_answer = data.get("content", "").strip().upper()
                 
-                # 如果响应依然为空，尝试从 choices 结构中获取 (兼容不同版本的 llama.cpp server)
-                if not answer and "choices" in data:
-                    answer = data["choices"][0].get("text", "").strip().upper()
+                # 兼容性处理
+                if not raw_answer and "choices" in data:
+                    raw_answer = data["choices"][0].get("text", "").strip().upper()
                 
-                print(f"DEBUG: Gemma raw response: '{answer}'")
+                print(f"DEBUG: Gemma raw response: '{raw_answer}'")
                 
-                # 核心修复：自动剥离 Prompt 回显部分
-                # 如果回答中包含 Prompt 的核心关键词，则只截取关键词之后的内容
-                for stop_word in ["图中是否有", "活着的人", "YES 或 NO", "MODEL\n"]:
-                    upper_stop = stop_word.upper()
-                    if upper_stop in answer:
-                        answer = answer.split(upper_stop)[-1].strip()
+                # --- 强力清洗逻辑 ---
+                # 即使模型复读了指令或包含了 Prompt 片段，我们也只看最后的有效输出
+                cleaned = raw_answer
+                for stop_word in ["ANSWER:", "MODEL\n", "[IMG-1]", "INSTRUCTION", "YES OR NO"]:
+                    if stop_word in cleaned:
+                        cleaned = cleaned.split(stop_word)[-1].strip()
                 
-                # 进一步清理：移除可能残留在开头的标点或 IMG-1 标签
-                if answer.startswith(":") or answer.startswith("："):
-                    answer = answer[1:].strip()
+                # 去除前缀标点
+                cleaned = cleaned.lstrip(":： ").strip()
                 
-                # 如果回答中包含 [IMG-1] 标签（有些模型会复读），取其后的内容
-                if "[IMG-1]" in answer:
-                    parts = answer.split("[IMG-1]")
-                    if len(parts) > 1 and parts[-1].strip():
-                        answer = parts[-1].strip()
-                    else:
-                        answer = parts[0].strip() # 如果在末尾，取前面
+                print(f"DEBUG: Gemma cleaned response: '{cleaned}'")
                 
-                print(f"DEBUG: Gemma cleaned response: '{answer}'")
-                
-                # 严苛解析逻辑：必须是回答的开头包含关键词，且排除掉对指令的复读
-                if len(answer) > 100:
-                    return "NO" 
-
-                if "YES" in answer or "确认有人" in answer or "是的" in answer:
+                # 最终决策：寻找关键词
+                if "YES" in cleaned or "是的" in cleaned or "确认" in cleaned:
                     return "YES"
-                elif "NO" in answer or "无人" in answer or "没有" in answer:
+                elif "NO" in cleaned or "无人" in cleaned or "没有" in cleaned:
                     return "NO"
                 else:
+                    # 最后的兜底：如果在整个 raw_answer 中能找到 YES/NO 也行
+                    if "YES" in raw_answer: return "YES"
+                    if "NO" in raw_answer: return "NO"
                     return "NO" # 默认保守处理
             else:
                 print(f"❌ Gemma API 状态码异常: {resp.status_code}")
@@ -167,7 +163,6 @@ class GemmaReviewQueue:
             print(f"❌ Gemma 调用过程中发生崩溃: {e}")
             return "UNKNOWN"
         finally:
-            # 请求完成后再次清理，释放显存
             try:
                 requests.delete(self.gemma_slots_url, timeout=1.0)
             except:

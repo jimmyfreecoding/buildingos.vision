@@ -571,6 +571,7 @@ def process_camera(cam_id, cam_info):
                         if success:
                             jpg_bytes = buffer.tobytes()
                             gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+                            decision_chain.append(f"Gemma 二级裁决结果: {gemma_res}")
                         else:
                             log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
                             gemma_res = "NO"
