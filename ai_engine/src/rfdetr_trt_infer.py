@@ -156,83 +156,69 @@ class RFDETRTensorRTEngine:
 
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h, conf_thres=None):
         """
-        针对 aux1 模型优化的解析逻辑：
-        1. 多头探测：寻找主头 (output0 或 shape[1]==300, shape[2]==84)
-        2. 自动 Sigmoid：如果坐标不在 0-1 之间，尝试对其进行映射
+        深度优化版解析逻辑 (针对 aux1 乱序与堆积问题)：
+        1. 强制坐标与分类全量 Sigmoid。
+        2. 支持 cx,cy,w,h 中心点解码。
+        3. 打印详细原始数值，用于探测背景位偏移。
         """
         # --- 1. 深度诊断日志 ---
-        print("\n" + "-"*50)
-        print("RF-DETR aux1 ENGINE DIAGNOSTICS")
+        print("\n" + "="*50)
+        print("RF-DETR ENGINE DEEP DIAGNOSTICS")
         for k, v in outputs.items():
-            print(f"Tensor: {k:20} | Shape: {str(v.shape):15} | Range: [{np.min(v):.2f}, {np.max(v):.2f}]")
-        print("-"*50 + "\n")
-
-        boxes_raw = None
-        logits_raw = None
-
-        # 2. 锁定主头：优先使用 'output0'，否则找 shape[2] >= 84 的张量
+            print(f"Tensor: {k:15} | Shape: {str(v.shape):15} | Range: [{np.min(v):.2f}, {np.max(v):.2f}]")
+        
+        # 寻找主输出头
         main_v = None
         if 'output0' in outputs:
             main_v = outputs['output0'][0]
         else:
-            # 兜底：寻找最后一个符合形状的（通常最终头在最后或第一个）
             for v in outputs.values():
                 if v.ndim == 3 and v.shape[-1] >= 84:
                     main_v = v[0]
                     break
         
-        if main_v is not None:
-            boxes_raw = main_v[:, :4]
-            logits_raw = main_v[:, 4:84]
-        else:
-            # 兼容分离的 boxes 和 scores
-            for k, v in outputs.items():
-                if v.ndim == 3 and v.shape[-1] == 4: boxes_raw = v[0]
-                elif v.ndim == 3 and v.shape[-1] >= 80: logits_raw = v[0]
-
-        if boxes_raw is None or logits_raw is None:
+        if main_v is None:
             print("ERROR: No valid detection heads found!")
             return []
 
-        # 3. 执行分类分数计算
-        # 强制执行 Sigmoid 以确保分数在 0-1 之间
-        scores = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
-        
-        # 4. 坐标自适应解码
-        # 如果坐标数值超出了合理的 [0, 1] 比例范围，极有可能是 Engine 导出时未包含 Sigmoid 映射
-        box_min, box_max = np.min(boxes_raw), np.max(boxes_raw)
-        needs_sigmoid = (box_min < -0.1 or box_max > 1.1)
-        
-        if needs_sigmoid:
-            # 强制映射到 0-1 (DETR 协议)
-            cx_cy_w_h = 1 / (1 + np.exp(-np.clip(boxes_raw, -15, 15)))
-            # print(f"DEBUG: Auto-applied Sigmoid to box coordinates (Range was [{box_min:.2f}, {box_max:.2f}])")
-        else:
-            cx_cy_w_h = boxes_raw
+        # 打印前 2 个框的原始数据 (前 10 维)，看坐标数值和第一个类别的分数
+        print(f"Raw Vector[0]: {main_v[0, :10]}")
+        print(f"Raw Vector[1]: {main_v[1, :10]}")
+        print("="*50 + "\n")
 
-        # 5. 过滤结果
-        max_scores = np.max(scores, axis=1)
-        max_indices = np.argmax(scores, axis=1)
+        # 2. 强制执行 Sigmoid
+        # 针对 Logits 输出的模型，这一步是纠正坐标堆积的关键
+        main_v_sig = 1 / (1 + np.exp(-np.clip(main_v, -15, 15)))
+        
+        boxes_sig = main_v_sig[:, :4]
+        # 尝试：如果类别依然乱序，可能是索引 4 是背景，真正的类别从 5 开始
+        # 这里先按照标准 COCO (4坐标 + 80类别) 解析，后续通过日志判断是否需要 offset
+        logits_sig = main_v_sig[:, 4:84]
+        
+        max_scores = np.max(logits_sig, axis=1)
+        max_indices = np.argmax(logits_sig, axis=1)
         
         actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
         results = []
 
         for i in range(len(max_scores)):
             if max_scores[i] >= actual_conf_thres:
-                cx, cy, bw, bh = cx_cy_w_h[i]
+                cx, cy, bw, bh = boxes_sig[i]
                 
-                # DETR 标准转换：[cx, cy, w, h] -> [x1, y1, x2, y2]
+                # 坐标转换：[cx, cy, w, h] 中心点格式 -> [x1, y1, x2, y2]
                 x1 = (cx - bw / 2.0) * orig_w
                 y1 = (cy - bh / 2.0) * orig_h
                 x2 = (cx + bw / 2.0) * orig_w
                 y2 = (cy + bh / 2.0) * orig_h
                 
-                # 裁剪与边界保护
+                # 边界剪裁与物理保护
                 x1, y1 = max(0, int(x1)), max(0, int(y1))
                 x2, y2 = min(orig_w, int(x2)), min(orig_h, int(y2))
                 
                 if x1 < x2 and y1 < y2:
                     cls_id = int(max_indices[i])
+                    # 注意：如果发现“长颈鹿(giraffe)”代表“人”，说明索引向后偏移了
+                    # 后续可通过在这里 cls_id - 1 或 classes 列表头部插入 'background' 修复
                     results.append({
                         "bbox": [x1, y1, x2, y2],
                         "conf": float(max_scores[i]),
@@ -242,7 +228,9 @@ class RFDETRTensorRTEngine:
         
         if results:
             best = max(results, key=lambda x: x['conf'])
-            print(f"✅ SUCCESS: Detected {best['class_name']} with confidence {best['conf']:.3f}")
+            # 这里的打印非常重要：观察第一个类别的分数 p0
+            p0 = logits_sig[np.argmax(max_scores), 0]
+            print(f"SUCCESS: Best Detection {best['class_name']} ({best['conf']:.3f}) | Person(idx0) Score: {p0:.3f}")
             
         return results
 
