@@ -107,11 +107,11 @@ class GemmaReviewQueue:
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
                 "temperature": 0.1, 
-                "n_predict": 16,
+                "n_predict": 128,  # 显著增加预测长度，防止模型复读 Prompt 导致内容被截断
                 "stream": False,
                 "cache_prompt": False,
                 "echo": False,
-                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]"] 
+                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中是否有"] 
             }
             
             # 5. 发起请求
