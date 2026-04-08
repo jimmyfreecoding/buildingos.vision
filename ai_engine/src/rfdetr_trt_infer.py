@@ -119,11 +119,14 @@ class RFDETRTensorRTEngine:
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
         # 核心调整：恢复 Mean/Std 归一化。
-        # 事实证明，如果没有归一化，模型会将床看成马桶（数据分布完全偏离）。
+        # 如果模型输出异常（如致盲），请尝试注释掉 mean/std 减法，仅保留 / 255.0
         x = rgb.astype(np.float32) / 255.0
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         x = (x - mean) / std
+        
+        # 调试辅助：如果需要观察归一化后的图像（注意：归一化后会有负数，直接保存会变黑，需反向映射或仅观察缩放图）
+        # cv2.imwrite("/tmp/rfdetr_input_debug.jpg", resized) 
         
         x = np.transpose(x, (2, 0, 1))[None, ...]
         
@@ -153,7 +156,7 @@ class RFDETRTensorRTEngine:
         return outputs
 
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
-        # 1. 寻找 84 列的主输出
+        # 1. 寻找 84 列的主输出 (300个预测框，每个框 4坐标 + 80类别)
         main_tensor = None
         for v in outputs.values():
             if v.ndim == 3 and v.shape[-1] >= 84:
@@ -161,63 +164,55 @@ class RFDETRTensorRTEngine:
                 break
         if main_tensor is None: return []
 
-        # 【核心修正】根据日志 box=[-5.84, ...] 判定：
-        # 之前的逻辑误把分数当成了坐标。
-        # 重新对齐：前 4 列是坐标 [cx, cy, w, h]，后 80 列是类别分数
+        # 1. 拆分坐标和类别概率
+        # DETR 默认输出通常是 0-1 归一化的 [cx, cy, w, h]
         boxes_raw = main_tensor[:, :4]
         logits_raw = main_tensor[:, 4:84]
         
-        def sigmoid(x):
-            return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
-        
-        # 转换分数
-        scores = sigmoid(logits_raw)
-        
-        # --- 自动探测人员索引 ---
-        # 考虑到可能存在的背景类偏移，我们取索引 0 和 索引 1 中的最大值作为人
-        person_scores_idx0 = scores[:, 0]
-        person_scores_idx1 = scores[:, 1]
-        
-        # 如果索引 1 的分数显著高于索引 0，说明模型发生了位移
-        if np.max(person_scores_idx1) > np.max(person_scores_idx0) * 2 and np.max(person_scores_idx1) > 0.5:
-            # 自动切换到索引 1 作为人 (有些模型 0 是背景)
-            person_scores = person_scores_idx1
-            # print("DEBUG: Auto-switched person index to 1")
+        # 【重要】检查是否需要 Sigmoid
+        # 如果 logits_raw 里面有负数，说明是原始 Logits，需要 Sigmoid 转换为分数。
+        # 如果全是 0-1 之间，说明导出时已经包含了 Sigmoid，再次执行会导致分数大幅压缩。
+        if np.min(logits_raw) < 0:
+            scores = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
         else:
-            person_scores = person_scores_idx0
-
-        # 3. 坐标解码：强制将 0-1 映射到像素
-        boxes = boxes_raw.copy().astype(np.float32)
-        # DETR 必选解码：[cx, cy, w, h] -> [x1, y1, x2, y2]
-        cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+            scores = logits_raw
+        
+        # 2. 坐标解码 (DETR 专用：中心点格式转矩形格式)
+        # 确认 boxes_raw 的范围。如果是 0-1 映射，直接乘原图宽高
+        cx, cy, bw, bh = boxes_raw[:, 0], boxes_raw[:, 1], boxes_raw[:, 2], boxes_raw[:, 3]
         x1 = (cx - bw / 2.0) * orig_w
         y1 = (cy - bh / 2.0) * orig_h
         x2 = (cx + bw / 2.0) * orig_w
         y2 = (cy + bh / 2.0) * orig_h
         
-        # 4. 提取结果
+        # 3. 过滤结果
         results = []
-        all_max_scores = np.max(scores, axis=1)
-        all_max_indices = np.argmax(scores, axis=1)
+        max_scores = np.max(scores, axis=1)
+        max_indices = np.argmax(scores, axis=1)
         
-        # 调试：打印真正的最高分物体（不再被负数坐标干扰）
-        best_idx = np.argmax(all_max_scores)
-        best_cls = all_max_indices[best_idx]
-        best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
-        print(f"RF-DETR Detected: {best_name}({best_cls}) score={all_max_scores[best_idx]:.3f} person_max={np.max(person_scores):.3f}")
+        # 调试：检测到最显著的物体信息
+        best_idx = np.argmax(max_scores)
+        best_score = max_scores[best_idx]
+        best_cls = int(max_indices[best_idx])
+        
+        if best_score > 0.1:
+            best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
+            # 自动探测类别偏移：如果“人”的分数在索引 1 显著高于索引 0，说明存在背景类
+            p0 = scores[best_idx, 0]
+            p1 = scores[best_idx, 1] if scores.shape[1] > 1 else 0
+            print(f"RF-DETR Detected: {best_name}({best_cls}) score={best_score:.3f} p0={p0:.3f} p1={p1:.3f}")
 
-        indices = np.where(all_max_scores >= self.conf_thres)[0]
-        for idx in indices:
-            conf = float(all_max_scores[idx])
-            cls_id = int(all_max_indices[idx])
-            
-            # 记录结果
-            results.append({
-                "bbox": [int(x1[idx]), int(y1[idx]), int(x2[idx]), int(y2[idx])],
-                "conf": conf,
-                "class_id": cls_id,
-                "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"cls_{cls_id}"
-            })
+        for i in range(len(max_scores)):
+            if max_scores[i] >= self.conf_thres:
+                cls_id = int(max_indices[i])
+                # 注意：如果出现“类别张冠李戴”，通常是由于 COCO_CLASSES 缺少 'background' 导致位移
+                # 目前逻辑保持原样，通过日志确认偏移后再手动调整 classes 列表
+                results.append({
+                    "bbox": [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
+                    "conf": float(max_scores[i]),
+                    "class_id": cls_id,
+                    "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"ID_{cls_id}"
+                })
         return results
 
     def predict(self, img):
