@@ -3,7 +3,10 @@
     <template #header>
       <div class="card-header">
         <span><el-icon><Calendar /></el-icon> 场景状态热力图 (Occupancy Heatmap)</span>
-        <el-button @click="fetchLogs" type="primary" plain size="small" :loading="loading">刷新数据</el-button>
+        <div class="header-buttons">
+          <el-button @click="dialogTestVisible = true" type="warning" plain size="small" icon="Picture">测试图 (验证算法)</el-button>
+          <el-button @click="fetchLogs" type="primary" plain size="small" :loading="loading">刷新数据</el-button>
+        </div>
       </div>
     </template>
 
@@ -178,6 +181,84 @@
         </el-timeline-item>
       </el-timeline>
     </el-dialog>
+
+    <!-- 算法验证单图测试弹窗 -->
+    <el-dialog v-model="dialogTestVisible" title="算法单图验证 (Inference Test)" width="800px" destroy-on-close>
+      <div class="test-container">
+        <el-row :gutter="20">
+          <el-col :span="10">
+            <el-form :model="testForm" label-position="top">
+              <el-form-item label="上传测试图片">
+                <el-upload
+                  class="test-uploader"
+                  action="#"
+                  :show-file-list="false"
+                  :auto-upload="false"
+                  :on-change="handleTestImageChange"
+                  accept="image/*"
+                >
+                  <img v-if="testForm.imageUrl" :src="testForm.imageUrl" class="test-preview-img" />
+                  <div v-else class="test-uploader-placeholder">
+                    <el-icon class="test-uploader-icon"><Plus /></el-icon>
+                    <span>点击上传图片</span>
+                  </div>
+                </el-upload>
+              </el-form-item>
+              
+              <el-form-item label="置信度阈值 (Conf Thres)">
+                <el-slider v-model="testForm.conf_thres" :min="0.01" :max="0.99" :step="0.01" show-input />
+                <div class="form-tip">数值越低越容易检出，但误报可能增加</div>
+              </el-form-item>
+
+              <el-form-item>
+                <el-button type="primary" @click="submitTest" :loading="testing" :disabled="!testForm.imageBase64" style="width: 100%">
+                  开始推理验证
+                </el-button>
+              </el-form-item>
+            </el-form>
+          </el-col>
+          
+          <el-col :span="14">
+            <div class="test-result-section">
+              <div v-if="testing" class="test-loading">
+                <el-skeleton :rows="8" animated />
+              </div>
+              <div v-else-if="testResult" class="test-result-content">
+                <div class="result-title">推理可视化 (Annotated Result)</div>
+                <el-image 
+                  :src="testResult.annotated_image" 
+                  :preview-src-list="[testResult.annotated_image]"
+                  fit="contain" 
+                  class="test-result-img"
+                />
+                
+                <div class="result-stats">
+                  <el-tag size="small" type="info">检测器: {{ testResult.detector_source }}</el-tag>
+                  <el-tag size="small" type="success" style="margin-left: 10px;">检出目标: {{ testResult.results.length }} 个</el-tag>
+                </div>
+
+                <div class="result-list" style="margin-top: 15px;">
+                  <el-table :data="testResult.results" size="small" border height="150">
+                    <el-table-column prop="class_name" label="类别" width="100" />
+                    <el-table-column prop="conf" label="置信度" width="100">
+                      <template #default="scope">
+                        {{ (scope.row.conf * 100).toFixed(1) }}%
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="坐标 (BBox)">
+                      <template #default="scope">
+                        {{ scope.row.bbox.join(', ') }}
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+              <el-empty v-else description="等待上传图片并点击开始推理"></el-empty>
+            </div>
+          </el-col>
+        </el-row>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -185,7 +266,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { Calendar, VideoCamera } from '@element-plus/icons-vue'
+import { Calendar, VideoCamera, Plus, Picture, Search } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const allLogs = ref([])
@@ -193,6 +274,56 @@ const selectedArea = ref('')
 const dateRange = ref([])
 const autoRefresh = ref(false)
 let refreshInterval = null
+
+const dialogVisible = ref(false)
+const dialogTitle = ref('')
+const dialogLogs = ref([])
+
+// --- Test Image State ---
+const dialogTestVisible = ref(false)
+const testing = ref(false)
+const testResult = ref(null)
+const testForm = ref({
+  imageUrl: '',
+  imageBase64: '',
+  conf_thres: 0.25
+})
+
+const handleTestImageChange = (file) => {
+  const rawFile = file.raw
+  if (!rawFile.type.startsWith('image/')) {
+    ElMessage.error('只能上传图片文件!')
+    return false
+  }
+  
+  testForm.value.imageUrl = URL.createObjectURL(rawFile)
+  
+  const reader = new FileReader()
+  reader.readAsDataURL(rawFile)
+  reader.onload = () => {
+    testForm.value.imageBase64 = reader.result
+  }
+}
+
+const submitTest = async () => {
+  if (!testForm.value.imageBase64) return
+  
+  testing.value = true
+  testResult.value = null
+  
+  try {
+    const res = await axios.post('/api/ai/test', {
+      image: testForm.value.imageBase64,
+      conf_thres: testForm.value.conf_thres
+    })
+    testResult.value = res.data
+  } catch (e) {
+    ElMessage.error(e.response?.data?.error || '测试请求失败')
+  } finally {
+    testing.value = false
+  }
+}
+// -------------------------
 
 const toggleAutoRefresh = (val) => {
   if (val) {
@@ -559,5 +690,62 @@ onMounted(() => {
   border-radius: 4px;
   background-color: #f5f7fa;
   border: 1px solid #ebeef5;
+}
+
+/* Test Dialog Styles */
+.test-uploader .el-upload {
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+.test-uploader .el-upload:hover {
+  border-color: #409eff;
+}
+.test-uploader-placeholder {
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: #8c939d;
+  background: #fbfdff;
+}
+.test-uploader-icon {
+  font-size: 28px;
+  margin-bottom: 10px;
+}
+.test-preview-img {
+  width: 100%;
+  height: 200px;
+  object-fit: contain;
+  display: block;
+}
+.test-result-section {
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 400px;
+  background: #fcfcfc;
+}
+.result-title {
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: #303133;
+}
+.test-result-img {
+  width: 100%;
+  height: 250px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  background: #000;
+}
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 5px;
 }
 </style>

@@ -5,8 +5,11 @@ import os
 import json
 import urllib.request
 import urllib.parse
+import base64
+import numpy as np
 from datetime import datetime
 import paho.mqtt.client as mqtt
+from flask import Flask, request, jsonify
 
 # 导入我们新写的双轨制底层驱动与业务大脑
 from yolo_infer import YoloTensorRTEngine
@@ -14,6 +17,80 @@ from rfdetr_trt_infer import RFDETRTensorRTEngine
 from state_machine import PresenceStateMachine, SmokingStateMachine
 from gemma_queue import gemma_queue
 import paho.mqtt.client as mqtt
+
+# --- Flask App for Single Image Test ---
+flask_app = Flask(__name__)
+
+@flask_app.route('/predict', methods=['POST'])
+def api_predict():
+    """
+    接收 Base64 图片和参数，执行 AI 推理并返回结果。
+    用于前端“测试图”功能，支持实时调整参数。
+    """
+    try:
+        data = request.json
+        if not data or 'image' not in data:
+            return jsonify({"error": "No image data provided"}), 400
+        
+        # 1. 解码图片
+        img_b64 = data['image']
+        if ',' in img_b64:
+            img_b64 = img_b64.split(',')[1]
+        
+        img_bytes = base64.b64decode(img_b64)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return jsonify({"error": "Failed to decode image"}), 400
+        
+        # 2. 获取参数
+        conf_thres = data.get('conf_thres')
+        if conf_thres is not None:
+            conf_thres = float(conf_thres)
+            
+        # 3. 执行推理 (确保模型已初始化)
+        init_tensorrt_models()
+        
+        # 默认使用人员感知模型 (RF-DETR 或 YOLO)
+        results = []
+        if pose_model:
+            results = pose_model.predict(frame, conf_thres=conf_thres)
+            
+        # 4. 绘制结果图 (用于直观观测)
+        annotated_frame = frame.copy()
+        for res in results:
+            x1, y1, x2, y2 = res['bbox']
+            conf = res['conf']
+            cls_id = res['class_id']
+            # 获取类别名
+            cls_name = "person" if cls_id == 0 else f"cls_{cls_id}"
+            if hasattr(pose_model, 'classes') and cls_id < len(pose_model.classes):
+                cls_name = pose_model.classes[cls_id]
+                
+            color = (0, 0, 255) if cls_id == 0 else (255, 0, 0)
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(annotated_frame, f"{cls_name} {conf:.2f}", (x1, y1 - 5), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+        # 5. 编码结果图为 Base64
+        _, buffer = cv2.imencode('.jpg', annotated_frame)
+        annotated_b64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            "results": results,
+            "annotated_image": f"data:image/jpeg;base64,{annotated_b64}",
+            "detector_source": presence_detector_source
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+def run_flask():
+    log_info("Starting Flask API server for AI testing on port 5000...")
+    flask_app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
 
 # --- Environment Detection & Path/URL Translation Helpers ---
 def is_in_container():
@@ -670,6 +747,11 @@ if __name__ == "__main__":
 
     # 启动摄像头定时采样线程
     threads = []
+    
+    # 启动单图测试 HTTP 服务
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
     for cam_id, cam_info in camera_config.items():
         t = threading.Thread(target=process_camera, args=(cam_id, cam_info))
         t.start()

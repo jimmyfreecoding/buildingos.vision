@@ -432,6 +432,43 @@ app.get('/api/occupancy/logs', (req, res) => {
 // --- 6. Gemma Local Model API ---
 const GEMMA_HOST = process.env.GEMMA_HOST || '172.17.0.1'; // Default docker bridge to host
 const GEMMA_PORT = process.env.GEMMA_PORT || 8080;
+const AI_ENGINE_HOST = process.env.AI_ENGINE_HOST || 'ai-engine';
+const AI_ENGINE_PORT = process.env.AI_ENGINE_PORT || 5000;
+
+app.post('/api/ai/test', (req, res) => {
+    const { image, conf_thres } = req.body;
+    
+    const payload = JSON.stringify({ image, conf_thres });
+    const options = {
+        hostname: AI_ENGINE_HOST,
+        port: AI_ENGINE_PORT,
+        path: '/predict',
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    const aiReq = http.request(options, (aiRes) => {
+        let data = '';
+        aiRes.on('data', (chunk) => { data += chunk; });
+        aiRes.on('end', () => {
+            try {
+                res.json(JSON.parse(data));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse AI Engine response', raw: data });
+            }
+        });
+    });
+
+    aiReq.on('error', (err) => {
+        res.status(500).json({ error: 'Failed to connect to AI Engine', details: err.message });
+    });
+
+    aiReq.write(payload);
+    aiReq.end();
+});
 
 app.get('/api/gemma/status', (req, res) => {
     let statusData = { status: 'Offline', details: null };

@@ -155,7 +155,7 @@ class RFDETRTensorRTEngine:
             outputs[name] = np.array(meta["host"]).reshape(meta["shape"])
         return outputs
 
-    def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
+    def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h, conf_thres=None):
         # 1. 寻找 84 列的主输出 (300个预测框，每个框 4坐标 + 80类别)
         main_tensor = None
         for v in outputs.values():
@@ -190,6 +190,9 @@ class RFDETRTensorRTEngine:
         max_scores = np.max(scores, axis=1)
         max_indices = np.argmax(scores, axis=1)
         
+        # 使用动态传入的阈值或类成员默认值
+        actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
+        
         # 调试：检测到最显著的物体信息
         best_idx = np.argmax(max_scores)
         best_score = max_scores[best_idx]
@@ -203,7 +206,7 @@ class RFDETRTensorRTEngine:
             print(f"RF-DETR Detected: {best_name}({best_cls}) score={best_score:.3f} p0={p0:.3f} p1={p1:.3f}")
 
         for i in range(len(max_scores)):
-            if max_scores[i] >= self.conf_thres:
+            if max_scores[i] >= actual_conf_thres:
                 cls_id = int(max_indices[i])
                 # 注意：如果出现“类别张冠李戴”，通常是由于 COCO_CLASSES 缺少 'background' 导致位移
                 # 目前逻辑保持原样，通过日志确认偏移后再手动调整 classes 列表
@@ -215,7 +218,7 @@ class RFDETRTensorRTEngine:
                 })
         return results
 
-    def predict(self, img):
+    def predict(self, img, conf_thres=None):
         if img is None:
             return []
         
@@ -225,6 +228,6 @@ class RFDETRTensorRTEngine:
             with trt_infer_lock:
                 x, scale_x, scale_y, w, h = self._preprocess(img)
                 outputs = self._infer(x)
-                return self._parse_outputs(outputs, scale_x, scale_y, w, h)
+                return self._parse_outputs(outputs, scale_x, scale_y, w, h, conf_thres=conf_thres)
         finally:
             self.cuda_context.pop()

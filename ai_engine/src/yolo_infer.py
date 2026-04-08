@@ -24,13 +24,15 @@ class YoloTensorRTEngine:
         # 原生加载，自带 TRT 推理加速，免除 magicTag 烦恼
         self.model = YOLO(engine_path, task=task)
         
-    def predict(self, img):
+    def predict(self, img, conf_thres=None):
         if img is None:
             return []
             
+        actual_conf = conf_thres if conf_thres is not None else self.conf_thres
+        
         with trt_infer_lock:
             # verbose=False 减少日志刷屏
-            results = self.model(img, conf=self.conf_thres, iou=self.iou_thres, verbose=False)
+            results = self.model(img, conf=actual_conf, iou=self.iou_thres, verbose=False)
         
         parsed_results = []
         for r in results:
