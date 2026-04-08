@@ -440,6 +440,13 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
 cv2_open_lock = threading.Lock()
 
 def process_camera(cam_id, cam_info):
+    """
+    针对每个摄像头运行的独立采样线程。
+    1. 清理 OpenCV 缓存以确保抓到的是当前最新帧。
+    2. 执行推理并上报结果。
+    """
+    global presence_detector_source
+    
     rtsp_url = cam_info.get("url")
     area_code = cam_info.get("areaCode", "UNKNOWN")
     enabled = cam_info.get("enabled", True)
@@ -502,9 +509,10 @@ def process_camera(cam_id, cam_info):
                         continue
                 
                 # 读取一帧 (必须真正抛弃堆积的缓存帧，使用 grab 循环)
+                # 解决展示图时间戳滞后（比如 15:29 看到 14:12 的图）的问题
                 try:
-                    # 使用 grab 抛弃多余帧，只 decode 最后一帧
-                    for _ in range(5): 
+                    # 使用 grab 抛弃多余帧，只 decode 最后一帧 (假设缓冲区深度不会超过 15 帧)
+                    for _ in range(15): 
                         cap.grab()
                     ret, frame = cap.retrieve()
                 except Exception as e:

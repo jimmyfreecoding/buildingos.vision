@@ -160,7 +160,7 @@
                   <!-- 显示第一张图（也就是带有时间戳和红框的 annotated_frame） -->
                   <el-image 
                     v-if="log.images && log.images.length > 0"
-                    :src="getImageUrl(log.images[0])" 
+                    :src="`${getImageUrl(log.images[0])}?t=${new Date().getTime()}`" 
                     :preview-src-list="log.images.map(i => getImageUrl(i))"
                     :initial-index="0"
                     fit="contain"

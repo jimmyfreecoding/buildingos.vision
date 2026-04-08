@@ -171,6 +171,7 @@ class RFDETRTensorRTEngine:
         1. 分离张量：dets 为坐标，labels 为分类分数 (Logits)
         2. 坐标格式：dets 已经是 0-1 范围，不再做 Sigmoid
         3. 类别偏移：91 类通常包含背景，person 的索引为 1
+        4. NMS 抑制：消除重叠冗余框
         """
         # --- 1. 深度诊断日志 ---
         print("\n" + "="*50)
@@ -183,7 +184,6 @@ class RFDETRTensorRTEngine:
         logits_raw = outputs.get('labels')[0] if 'labels' in outputs else None
 
         if boxes_raw is None or logits_raw is None:
-            # 兜底：尝试根据形状找
             for v in outputs.values():
                 if v.ndim == 3 and v.shape[-1] == 4: boxes_raw = v[0]
                 elif v.ndim == 3 and v.shape[-1] == 91: logits_raw = v[0]
@@ -195,48 +195,73 @@ class RFDETRTensorRTEngine:
         # 3. 执行分类分数计算
         scores_91 = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
         
-        # 关键：获取最强的人员(Person)分数
-        # 在 COCO 91 中，1 是人，0 是背景。
-        p1_scores = scores_91[:, 1]
-        
         max_scores_91 = np.max(scores_91, axis=1)
         max_indices_91 = np.argmax(scores_91, axis=1)
         
         actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
-        results = []
-
+        
+        # 4. 初步收集候选框用于 NMS
+        candidates = []
         for i in range(len(max_scores_91)):
             if max_scores_91[i] >= actual_conf_thres:
-                # 4. 坐标解码：dets (0-1) 映射到像素
-                # 这种格式通常是 [x1, y1, x2, y2] 或 [cx, cy, w, h]
-                # 尝试：[cx, cy, w, h]
                 cx, cy, bw, bh = boxes_raw[i]
                 
-                # 判断格式：如果 x2 < x1 显然不是 x1y1x2y2
-                # 大多数 RF-DETR 导出的 dets 是 [x1, y1, x2, y2]
-                # 但如果还是挤在左上角，我们继续使用中心点转换
+                # 解码为像素坐标
                 x1 = (cx - bw / 2.0) * orig_w
                 y1 = (cy - bh / 2.0) * orig_h
                 x2 = (cx + bw / 2.0) * orig_w
                 y2 = (cy + bh / 2.0) * orig_h
                 
-                # 5. 类别映射 (91 -> 80)
-                # 在 COCO 91 协议中，1 是人，0 是背景。
-                # 我们将其映射回标准的 80 类以正确显示名称。
-                cls_id_91 = int(max_indices_91[i])
-                cls_id_80 = COCO_91_TO_80.get(cls_id_91, -1)
+                # 边界剪裁
+                x1, y1 = max(0, int(x1)), max(0, int(y1))
+                x2, y2 = min(orig_w, int(x2)), min(orig_h, int(y2))
                 
-                if cls_id_80 != -1:
-                    results.append({
-                        "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                        "conf": float(max_scores_91[i]),
-                        "class_id": cls_id_80,
-                        "class_name": self.classes[cls_id_80] if cls_id_80 < len(self.classes) else f"ID_{cls_id_80}"
-                    })
+                if x1 < x2 and y1 < y2:
+                    cls_id_91 = int(max_indices_91[i])
+                    cls_id_80 = COCO_91_TO_80.get(cls_id_91, -1)
+                    if cls_id_80 != -1:
+                        candidates.append({
+                            "bbox": [x1, y1, x2, y2],
+                            "conf": float(max_scores_91[i]),
+                            "class_id": cls_id_80,
+                            "class_name": self.classes[cls_id_80]
+                        })
+
+        # 5. 执行 NMS (非极大值抑制)
+        # 解决图中出现的“2个人被识别成5个候选人”的重叠框问题
+        if not candidates: return []
+        
+        # 按分数降序排序
+        candidates.sort(key=lambda x: x['conf'], reverse=True)
+        results = []
+        
+        def calculate_iou(boxA, boxB):
+            xA = max(boxA[0], boxB[0])
+            yA = max(boxA[1], boxB[1])
+            xB = min(boxA[2], boxB[2])
+            yB = min(boxA[3], boxB[3])
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+            boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+            iou = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+            return iou
+
+        while len(candidates) > 0:
+            best = candidates.pop(0)
+            results.append(best)
+            
+            # 过滤掉与当前最强框重叠度过高的同类框
+            # 按照建议将阈值调低到 0.45 以更激进地消除重叠框
+            remaining = []
+            for item in candidates:
+                if item['class_id'] == best['class_id'] and calculate_iou(best['bbox'], item['bbox']) > 0.45:
+                    continue
+                remaining.append(item)
+            candidates = remaining
         
         if results:
-            best = max(results, key=lambda x: x['conf'])
-            print(f"✅ SUCCESS: Detected {best['class_name']} ({best['conf']:.3f})")
+            best_det = max(results, key=lambda x: x['conf'])
+            print(f"✅ SUCCESS: Detected {best_det['class_name']} ({best_det['conf']:.3f}) after NMS")
             
         return results
 
