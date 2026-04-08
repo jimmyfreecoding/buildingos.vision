@@ -4,8 +4,8 @@
       <div class="card-header">
         <span><el-icon><Calendar /></el-icon> 场景状态热力图 (Occupancy Heatmap)</span>
         <div class="header-buttons">
-          <el-button @click="dialogTestVisible = true" type="warning" plain size="small" icon="Picture">测试图 (验证算法)</el-button>
-          <el-button @click="fetchLogs" type="primary" plain size="small" :loading="loading">刷新数据</el-button>
+          <el-button @click="dialogTestVisible = true" type="warning" plain size="small" :icon="Picture">测试图 (验证算法)</el-button>
+          <el-button @click="fetchLogs" type="primary" plain size="small" :icon="Search" :loading="loading">刷新数据</el-button>
         </div>
       </div>
     </template>
