@@ -337,10 +337,6 @@ const toggleAutoRefresh = (val) => {
   }
 }
 
-const dialogVisible = ref(false)
-const dialogTitle = ref('')
-const dialogLogs = ref([])
-
 // 默认显示最近8天（包含今天）
 const getDefaultDateRange = () => {
   const dates = []
