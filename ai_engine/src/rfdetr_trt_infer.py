@@ -156,53 +156,82 @@ class RFDETRTensorRTEngine:
         return outputs
 
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
-        # 查找输出张量
+        # 1. 获取所有输出张量并打印形状（仅执行一次，用于调试）
+        for name, meta in self.tensor_meta.items():
+            if name in outputs:
+                shape = outputs[name].shape
+                # print(f"DEBUG: Output [{name}] shape: {shape}")
+
+        # 2. 寻找 84 列或 80+ 列的主输出
         logits_arr = None
         boxes_arr = None
+        main_tensor = None
+        
         for v in outputs.values():
-            if v.ndim == 3:
-                if v.shape[-1] == 4: boxes_arr = v[0]
-                elif v.shape[-1] >= 80: logits_arr = v[0]
+            if v.ndim == 3 and v.shape[-1] >= 84:
+                main_tensor = v[0]
+                break
+        
+        if main_tensor is None:
+            # 备选：如果分开输出 [300, 4] 和 [300, 80]
+            for v in outputs.values():
+                if v.ndim == 3:
+                    if v.shape[-1] == 4: boxes_arr = v[0]
+                    elif v.shape[-1] >= 80: logits_arr = v[0]
+        else:
+            # 核心假设：RF-DETR 可能是 [scores(80), boxes(4)] 格式
+            # 我们根据最后一列是否在 0-1 之间且具有坐标特征来探测
+            # 尝试 格式 A: [boxes(4), scores(80)]
+            # 尝试 格式 B: [scores(80), boxes(4)]
+            if np.mean(main_tensor[:, :4]) < 1.0 and np.max(main_tensor[:, :4]) <= 1.01:
+                # 看起来前4列更像坐标
+                boxes_arr = main_tensor[:, :4]
+                logits_arr = main_tensor[:, 4:84]
+                # print("DEBUG: Detected Format A [boxes, scores]")
+            else:
+                # 看起来后4列更像坐标
+                logits_arr = main_tensor[:, :80]
+                boxes_arr = main_tensor[:, 80:84]
+                # print("DEBUG: Detected Format B [scores, boxes]")
 
         if boxes_arr is None or logits_arr is None: return []
 
-        # 核心逻辑：自动适配 80, 84, 91 等不同长度的输出
-        # 如果是 84，通常前 4 列是坐标
-        if logits_arr.shape[1] > 80:
-            real_logits = logits_arr[:, 4:]
-        else:
-            real_logits = logits_arr
-
-        # 激活函数
+        # 3. 激活函数
         def sigmoid(x):
             return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
         
-        scores = sigmoid(real_logits)
+        scores = sigmoid(logits_arr)
         
-        # --- 调试：找出得分最高的 5 个类别索引 ---
-        top_indices = np.argsort(-np.max(scores, axis=0))[:5]
-        debug_info = []
-        for idx in top_indices:
-            name = self.classes[idx] if idx < len(self.classes) else f"ID_{idx}"
-            debug_info.append(f"{name}({idx}): {np.max(scores[:, idx]):.3f}")
+        # 4. 坐标解码：支持 [cx, cy, w, h] -> [x1, y1, x2, y2]
+        # DETR 模型几乎全部输出中心点格式
+        boxes = boxes_arr.copy().astype(np.float32)
         
-        print(f"RF-DETR Top 5: {', '.join(debug_info)}")
-        
-        # 针对人员识别的特殊处理：如果 index 0 不对，尝试在全类中找人
-        person_score = np.max(scores[:, self.person_class_id])
-        
-        # 如果人不在索引 0，但在其他地方有高分（比如索引 1），我们需要自动适配
+        # 启发式判断：如果 x2 < x1 的情况很多，说明是 [cx, cy, w, h]
+        if np.mean(boxes[:, 0] > boxes[:, 2]) > 0.3 or np.mean(boxes[:, 1] > boxes[:, 3]) > 0.3:
+            cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+            x1 = cx - bw / 2.0
+            y1 = cy - bh / 2.0
+            x2 = cx + bw / 2.0
+            y2 = cy + bh / 2.0
+            boxes = np.stack([x1, y1, x2, y2], axis=1)
+
+        # 5. 提取结果
         results = []
         all_max_scores = np.max(scores, axis=1)
         all_max_indices = np.argmax(scores, axis=1)
         
+        # 打印 Top 1 调试
+        best_idx = np.argmax(all_max_scores)
+        best_cls = all_max_indices[best_idx]
+        best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
+        print(f"RF-DETR Best Det: {best_name} ({best_cls}) score={all_max_scores[best_idx]:.3f}")
+
         indices = np.where(all_max_scores >= self.conf_thres)[0]
         for idx in indices:
             conf = float(all_max_scores[idx])
             cls_id = int(all_max_indices[idx])
             
-            # 坐标解码
-            x1, y1, x2, y2 = boxes_arr[idx]
+            x1, y1, x2, y2 = boxes[idx]
             x1, x2 = x1 * orig_w, x2 * orig_w
             y1, y2 = y1 * orig_h, y2 * orig_h
             
