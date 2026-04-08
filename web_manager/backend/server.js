@@ -438,6 +438,8 @@ const AI_ENGINE_PORT = process.env.AI_ENGINE_PORT || 5000;
 app.post('/api/ai/test', (req, res) => {
     const { image, conf_thres } = req.body;
     
+    console.log(`[AI Test] Forwarding request to ${AI_ENGINE_HOST}:${AI_ENGINE_PORT}/predict...`);
+    
     const payload = JSON.stringify({ image, conf_thres });
     const options = {
         hostname: AI_ENGINE_HOST,
