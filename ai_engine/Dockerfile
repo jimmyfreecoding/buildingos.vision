@@ -35,7 +35,8 @@ RUN python3 -m venv --system-site-packages $VENV_PATH && \
     $VENV_PATH/bin/pip install --no-cache-dir --upgrade --ignore-installed torch torchvision && \
     $VENV_PATH/bin/pip install --no-cache-dir -r requirements.txt && \
     $VENV_PATH/bin/pip install --no-cache-dir ultralytics --no-deps && \
-    $VENV_PATH/bin/pip install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama polars ultralytics-thop
+    $VENV_PATH/bin/pip install --no-cache-dir psutil pyyaml tqdm matplotlib opencv-python "numpy<2.0.0" onnxslim colorama polars ultralytics-thop && \
+    $VENV_PATH/bin/python3 -c "import cv2,numpy,requests,flask,yaml,roboflow,ultralytics,tensorrt,pycuda.driver,paho.mqtt.client"
 
 # 复制业务代码
 COPY src/ ./src/
