@@ -95,25 +95,25 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 切换为极简指令，彻底杜绝回显。
-            # 对于 Gemma 2，如果模板过于复杂，可能会触发回显。
-            # 我们直接使用最精简的 Prompt 格式。
+            # 3. 切换为极简指令，并强制要求中文或简单 YES/NO。
+            # 为了解决空响应问题，我们让模型必须回答至少一个词。
             chat_prompt = (
                 f"<start_of_turn>user\n"
                 f"[img-1]图中是否有真实的、活着的人？请回答 YES 或 NO。<end_of_turn>\n"
                 f"<start_of_turn>model\n"
+                f"YES" # 强制预填一个词引导模型输出（如果 server 支持引导），或者保持原样但增加惩罚
             )
             
             # 4. 组装请求体
             payload = {
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.0,
-                "n_predict": 10,  # 只预测几个字符即可 (YES/NO)
+                "temperature": 0.2, # 略微提高温度，防止模型过于死板导致空输出
+                "n_predict": 32,
                 "stream": False,
                 "cache_prompt": False,
-                "echo": False,    # 显式禁用回显
-                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中是否有"] # 包含 Prompt 关键词作为停止词，强制切断回显
+                "echo": False,
+                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]"] 
             }
             
             # 5. 发起请求

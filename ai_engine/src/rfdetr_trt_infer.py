@@ -6,6 +6,19 @@ import threading
 trt_infer_lock = threading.Lock()
 
 
+# 标准 COCO 80 类别列表
+COCO_CLASSES = [
+    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+    'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+    'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+    'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+    'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+    'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+    'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+    'hair drier', 'toothbrush'
+]
+
 class RFDETRTensorRTEngine:
     def __init__(self, engine_path, conf_thres=0.25, person_class_id=0, max_det=100):
         self.engine_path = engine_path
@@ -13,6 +26,7 @@ class RFDETRTensorRTEngine:
         self.person_class_id = int(person_class_id)
         self.max_det = int(max_det)
         self.source_name = "rf-detr-trt"
+        self.classes = COCO_CLASSES
 
         try:
             import tensorrt as trt
@@ -194,8 +208,12 @@ class RFDETRTensorRTEngine:
             
         person_scores = scores[:, self.person_class_id]
         
+        # 获取每个预测框对应的最高分类别
+        all_max_scores = np.max(scores, axis=1)
+        all_max_indices = np.argmax(scores, axis=1)
+        
         # 调试：打印偏移后的真实分数
-        print(f"RF-DETR Inference: Global Max={np.max(scores):.4f} (at Class {col_idx}), Person Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
+        print(f"RF-DETR Inference: Global Max={np.max(scores):.4f} (at Class {col_idx}: {self.classes[col_idx]}), Person Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
 
         # 复制一份以防修改原数组
         boxes = boxes_arr.copy().astype(np.float32)
@@ -211,17 +229,20 @@ class RFDETRTensorRTEngine:
             boxes = np.stack([x1, y1, x2, y2], axis=1)
 
         results = []
-        indices = np.where(person_scores >= self.conf_thres)[0]
+        # 修改：返回所有超过阈值的类别，而不仅仅是人
+        indices = np.where(all_max_scores >= self.conf_thres)[0]
         if len(indices) == 0:
             return []
             
-        filtered_scores = person_scores[indices]
+        filtered_scores = all_max_scores[indices]
         filtered_boxes = boxes[indices]
+        filtered_classes = all_max_indices[indices]
         
         order = np.argsort(-filtered_scores)
         for idx in order[: self.max_det]:
             conf = float(filtered_scores[idx])
             x1, y1, x2, y2 = filtered_boxes[idx]
+            cls_id = int(filtered_classes[idx])
             
             # 还原到原始图像尺寸 (由于是 Squash，直接除以 scale)
             x1 = x1 * orig_w
@@ -240,7 +261,8 @@ class RFDETRTensorRTEngine:
             results.append({
                 "bbox": [x1, y1, x2, y2],
                 "conf": conf,
-                "class_id": self.person_class_id
+                "class_id": cls_id,
+                "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"cls_{cls_id}"
             })
         return results
 

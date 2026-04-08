@@ -449,25 +449,34 @@ def process_camera(cam_id, cam_info):
                 if need_p_sample and pose_model:
                     last_p_time = now
                     
-                    # YOLO 一级判定
+                    # RF-DETR/YOLO 一级判定
                     boxes = pose_model.predict(frame)
+                    
+                    # 过滤出“人”类别的框 (person_class_id 通常是 0)
+                    person_boxes = [b for b in boxes if b.get('class_id') == 0]
                     
                     has_person = False
                     decision_chain = []
-                    yolo_count = len(boxes)
+                    yolo_count = len(person_boxes)
                     annotated_frame = frame.copy()
                     
                     # 绘制时间戳
                     cv2.putText(annotated_frame, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
-                    if yolo_count > 0:
-                        decision_chain.append(f"Detector 检测到 {yolo_count} 个候选目标")
+                    # 绘制所有检测到的目标（用于调试分析）
+                    if len(boxes) > 0:
                         for b in boxes:
                             x1, y1, x2, y2 = b['bbox']
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                            cv2.putText(annotated_frame, f"DET: {b['conf']:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                        
-                        max_conf = max([b['conf'] for b in boxes])
+                            cls_name = b.get('class_name', 'unknown')
+                            conf = b['conf']
+                            # 人用红色，其他用蓝色
+                            color = (0, 0, 255) if cls_name == 'person' else (255, 0, 0)
+                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+                            cv2.putText(annotated_frame, f"{cls_name} {conf:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                    if yolo_count > 0:
+                        decision_chain.append(f"Detector 检测到 {yolo_count} 个候选人员")
+                        max_conf = max([b['conf'] for b in person_boxes])
                         prompt = "这幅图像中，红框标出的位置是否有真实的、活着的人？请回答 YES 或 NO。"
                     else:
                         decision_chain.append("Detector 未检测到人员，提交全图复核")
@@ -478,16 +487,6 @@ def process_camera(cam_id, cam_info):
                     success, buffer = cv2.imencode('.jpg', annotated_frame)
                     if success:
                         jpg_bytes = buffer.tobytes()
-                        
-                        # 【调试取证】将发送给 Gemma 的图片强行保存到本地，供人工核对 AI 到底在看什么
-                        try:
-                            # 修正宿主机下的路径映射，确保 debug_gemma.jpg 产生在项目根目录
-                            debug_path = os.path.join(os.path.expanduser("~"), "buildingos.vision/ai_engine/debug_gemma.jpg")
-                            cv2.imwrite(debug_path, annotated_frame)
-                            # print(f"DEBUG: Saved evidence to {debug_path}")
-                        except Exception as e:
-                            print(f"DEBUG: Failed to save evidence: {e}")
-                            
                         gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
                     else:
                         log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
@@ -510,8 +509,17 @@ def process_camera(cam_id, cam_info):
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
                     
-                    # 每一分钟的判断都写入本地 log，供前端热力图展示 (保存原始图和画框图，方便前端点击查看多级证据)
-                    save_minute_log_for_frontend(cam_id, area_code, has_person, images=[frame, annotated_frame] if yolo_count > 0 else frame, decision_chain=decision_chain, yolo_count=yolo_count)
+                    # 【核心优化】反馈到前端页面：
+                    # 1. 始终保存 [标注图, 原始图]，确保前端首选看到的是带框的标注图
+                    # 2. 即使 yolo_count == 0，也会显示出模型发现的其他物体（如桌子、电视等蓝色框）
+                    save_minute_log_for_frontend(
+                        cam_id, 
+                        area_code, 
+                        has_person, 
+                        images=[annotated_frame, frame], 
+                        decision_chain=decision_chain, 
+                        yolo_count=yolo_count
+                    )
                     
                     # 如果状态机决定收敛，触发 MQTT
                     if event_triggered:
@@ -524,8 +532,8 @@ def process_camera(cam_id, cam_info):
                             "timestamp": datetime.now().isoformat()
                         }
                         
-                        # 由于 MQTT 和日志保存需要一帧图像，如果本次有框就用当前帧，没有就不传或者传空
-                        publish_mqtt_event(cam_id, area_code, "presence", payload, frame if has_person else None)
+                        # 【核心优化】发布报警时，也使用标注过的图作为证据
+                        publish_mqtt_event(cam_id, area_code, "presence", payload, annotated_frame)
                         
                         # 如果确认为有人闯入，激活吸烟小窗口
                         if final_status == "occupied":
