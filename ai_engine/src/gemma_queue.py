@@ -112,11 +112,12 @@ class GemmaReviewQueue:
                 "prompt": 引导式提示词,
                 "image_data": [{"id": 1, "data": img_b64}],
                 "temperature": 0.0,   # 绝对确定性
-                "n_predict": 5,       # 极短生成，物理切断 think/reason 模式
+                "n_predict": 5,       # 极短生成
                 "stream": False,
                 "cache_prompt": False,
                 "echo": False,        # 关键：禁止回显 Prompt
-                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "Instruction", "Answer:", "Question:"] 
+                "include_reasoning": False,  # 【核心修改】显式关闭推理/思维链模式
+                "stop": ["<end_of_turn>", "user", "model", "Answer:"] 
             }
             
             # 5. 发起请求
