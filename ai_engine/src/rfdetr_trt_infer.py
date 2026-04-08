@@ -94,28 +94,38 @@ class RFDETRTensorRTEngine:
             raise RuntimeError(f"Unexpected input shape: {in_shape}")
         self.batch, self.channels, self.input_h, self.input_w = in_shape
 
-    def _letterbox(self, img):
-        h, w = img.shape[:2]
-        scale = min(self.input_w / w, self.input_h / h)
-        nw, nh = int(round(w * scale)), int(round(h * scale))
-        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        canvas = np.full((self.input_h, self.input_w, 3), 114, dtype=np.uint8)
-        pad_x = (self.input_w - nw) // 2
-        pad_y = (self.input_h - nh) // 2
-        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
-        rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    def _preprocess(self, img):
+        """
+        参考 app.py 实现：
+        1. 直接缩放 (Squash) 到模型输入尺寸，不使用 Letterbox
+        2. BGR 转 RGB
+        3. ImageNet 归一化 (Mean/Std)
+        """
+        orig_h, orig_w = img.shape[:2]
         
-        # 归一化到 0-1
+        # 1. 直接缩放 (Squash)
+        # 注意：app.py 使用 PIL.Image.LANCZOS，这里使用 cv2.INTER_LINEAR 模拟
+        resized = cv2.resize(img, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
+        
+        # 2. BGR 转 RGB
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        
+        # 3. 归一化到 0-1
         x = rgb.astype(np.float32) / 255.0
         
-        # 针对 RF-DETR / RT-DETR 的标准 ImageNet 归一化 (Mean/Std)
-        # 很多 DETR 模型在导出时没有内置这个，需要在预处理做
+        # 4. ImageNet 归一化 (根据 rfdetr 源码确认需要)
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         x = (x - mean) / std
         
+        # 5. 转置为 [1, 3, H, W]
         x = np.transpose(x, (2, 0, 1))[None, ...]
-        return x, scale, pad_x, pad_y, w, h
+        
+        # 由于是 Squash，scale 和 pad 需要重新定义以支持后处理还原
+        scale_x = self.input_w / orig_w
+        scale_y = self.input_h / orig_h
+        
+        return x, scale_x, scale_y, orig_w, orig_h
 
     def _infer(self, input_tensor):
         cuda = self.cuda
@@ -136,16 +146,13 @@ class RFDETRTensorRTEngine:
         for name in self.output_names:
             meta = self.tensor_meta[name]
             outputs[name] = np.array(meta["host"]).reshape(meta["shape"])
-            # 调试输出形状，帮助确认模型输出格式
-            # print(f"Output [{name}] shape: {meta['shape']}")
         return outputs
 
-    def _parse_outputs(self, outputs, scale, pad_x, pad_y, orig_w, orig_h):
+    def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
         boxes_arr = None
         logits_arr = None
 
         # 针对 RT-DETR / RF-DETR 的典型输出结构进行查找
-        # 结构 A: [1, 300, 4] boxes 和 [1, 300, 80] logits
         for v in outputs.values():
             if v.ndim == 3:
                 if v.shape[-1] == 4:
@@ -154,7 +161,6 @@ class RFDETRTensorRTEngine:
                     logits_arr = v[0]
 
         if boxes_arr is None or logits_arr is None:
-            # 尝试结构 B: 单一合并输出 [1, 300, 84]
             for v in outputs.values():
                 if v.ndim == 3 and v.shape[-1] > 4:
                     boxes_arr = v[0, :, :4]
@@ -163,10 +169,6 @@ class RFDETRTensorRTEngine:
 
         if boxes_arr is None or logits_arr is None:
             return []
-
-        # RT-DETR 使用 Sigmoid 激活函数处理分类分数
-        def sigmoid(x):
-            return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
 
         # 针对 RF-DETR 的分数解析优化：
         # 重要：在合并输出 [1, 300, 84] 中，前 4 列是 bbox 坐标 [cx, cy, w, h]
@@ -200,23 +202,15 @@ class RFDETRTensorRTEngine:
 
         # 归一化坐标转换 (DETR 通常输出 0-1 之间的 cx, cy, w, h)
         if np.max(boxes) <= 1.01:
-            # 检查是否是 [cx, cy, w, h] 格式
-            # 启发式：如果 x2 < x1 的比例很高，通常是 cx, cy, w, h
-            if np.mean(boxes[:, 0] < boxes[:, 2]) > 0.8 and np.max(boxes) <= 1.0:
-                # 已经是 x1, y1, x2, y2 归一化格式，直接放大
-                boxes[:, [0, 2]] *= self.input_w
-                boxes[:, [1, 3]] *= self.input_h
-            else:
-                # 转换 [cx, cy, w, h] -> [x1, y1, x2, y2] 并放大
-                cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-                x1 = (cx - bw / 2.0) * self.input_w
-                y1 = (cy - bh / 2.0) * self.input_h
-                x2 = (cx + bw / 2.0) * self.input_w
-                y2 = (cy + bh / 2.0) * self.input_h
-                boxes = np.stack([x1, y1, x2, y2], axis=1)
+            # 转换 [cx, cy, w, h] -> [x1, y1, x2, y2]
+            cx, cy, bw, bh = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+            x1 = (cx - bw / 2.0)
+            y1 = (cy - bh / 2.0)
+            x2 = (cx + bw / 2.0)
+            y2 = (cy + bh / 2.0)
+            boxes = np.stack([x1, y1, x2, y2], axis=1)
 
         results = []
-        # 按置信度排序
         indices = np.where(person_scores >= self.conf_thres)[0]
         if len(indices) == 0:
             return []
@@ -229,11 +223,11 @@ class RFDETRTensorRTEngine:
             conf = float(filtered_scores[idx])
             x1, y1, x2, y2 = filtered_boxes[idx]
             
-            # 还原到原始图像尺寸
-            x1 = (x1 - pad_x) / scale
-            y1 = (y1 - pad_y) / scale
-            x2 = (x2 - pad_x) / scale
-            y2 = (y2 - pad_y) / scale
+            # 还原到原始图像尺寸 (由于是 Squash，直接除以 scale)
+            x1 = x1 * orig_w
+            y1 = y1 * orig_h
+            x2 = x2 * orig_w
+            y2 = y2 * orig_h
             
             x1 = int(max(0, min(orig_w - 1, round(x1))))
             y1 = int(max(0, min(orig_h - 1, round(y1))))
@@ -258,8 +252,8 @@ class RFDETRTensorRTEngine:
         self.cuda_context.push()
         try:
             with trt_infer_lock:
-                x, scale, pad_x, pad_y, w, h = self._letterbox(img)
+                x, scale_x, scale_y, w, h = self._preprocess(img)
                 outputs = self._infer(x)
-                return self._parse_outputs(outputs, scale, pad_x, pad_y, w, h)
+                return self._parse_outputs(outputs, scale_x, scale_y, w, h)
         finally:
             self.cuda_context.pop()

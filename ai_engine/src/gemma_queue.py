@@ -95,12 +95,12 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 切换为 Gemma 2 官方 Chat 模板，彻底杜绝复读。
-            # 格式: <start_of_turn>user\n[img-1]prompt<end_of_turn>\n<start_of_turn>model\n
+            # 3. 切换为极简指令，彻底杜绝回显。
+            # 对于 Gemma 2，如果模板过于复杂，可能会触发回显。
+            # 我们直接使用最精简的 Prompt 格式。
             chat_prompt = (
                 f"<start_of_turn>user\n"
-                f"[img-1]{prompt}\n"
-                f"Answer ONLY with 'YES' or 'NO'.<end_of_turn>\n"
+                f"[img-1]图中是否有真实的、活着的人？请回答 YES 或 NO。<end_of_turn>\n"
                 f"<start_of_turn>model\n"
             )
             
@@ -109,10 +109,11 @@ class GemmaReviewQueue:
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
                 "temperature": 0.0,
-                "n_predict": 16,
+                "n_predict": 10,  # 只预测几个字符即可 (YES/NO)
                 "stream": False,
                 "cache_prompt": False,
-                "stop": ["<end_of_turn>", "user", "model"] # 移除 \n 停止词，防止首字符换行导致空响应
+                "echo": False,    # 显式禁用回显
+                "stop": ["<end_of_turn>", "user", "model", "[IMG-1]", "图中是否有"] # 包含 Prompt 关键词作为停止词，强制切断回显
             }
             
             # 5. 发起请求
@@ -121,15 +122,29 @@ class GemmaReviewQueue:
             if resp.status_code == 200:
                 data = resp.json()
                 answer = data.get("content", "").strip().upper()
-                print(f"DEBUG: Gemma raw response: '{answer}'")
                 
                 # 如果响应依然为空，尝试从 choices 结构中获取 (兼容不同版本的 llama.cpp server)
                 if not answer and "choices" in data:
                     answer = data["choices"][0].get("text", "").strip().upper()
-                    print(f"DEBUG: Gemma fallback response: '{answer}'")
+                
+                print(f"DEBUG: Gemma raw response: '{answer}'")
+                
+                # 核心修复：自动剥离 Prompt 回显部分
+                # 如果回答中包含 Prompt 的核心关键词，则只截取关键词之后的内容
+                for stop_word in ["图中是否有", "活着的人", "YES 或 NO", "MODEL\n"]:
+                    upper_stop = stop_word.upper()
+                    if upper_stop in answer:
+                        answer = answer.split(upper_stop)[-1].strip()
+                
+                # 进一步清理：移除可能残留在开头的标点或 IMG-1 标签
+                if answer.startswith(":") or answer.startswith("："):
+                    answer = answer[1:].strip()
+                if "[IMG-1]" in answer:
+                    answer = answer.split("[IMG-1]")[-1].strip()
+                
+                print(f"DEBUG: Gemma cleaned response: '{answer}'")
                 
                 # 严苛解析逻辑：必须是回答的开头包含关键词，且排除掉对指令的复读
-                # 如果回答太长且包含指令内容，则视为无效
                 if len(answer) > 100:
                     return "NO" 
 
