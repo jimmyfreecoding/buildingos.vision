@@ -1,3 +1,4 @@
+ultralytics
 paho-mqtt
 requests
 flask
