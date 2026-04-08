@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV CONFIG_PATH=/app/ai_engine/config/config.json
 ENV VENV_PATH=/opt/venv
-ENV PATH=/opt/venv/bin:$PATH
+ENV PATH=/usr/src/tensorrt/bin:/opt/venv/bin:$PATH
 
 # 更新系统依赖，安装那些在 ARM 上 pip 编译极慢或容易报错的系统级依赖
 RUN apt-get update && apt-get install -y \
