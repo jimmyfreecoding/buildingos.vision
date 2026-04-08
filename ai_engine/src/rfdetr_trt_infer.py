@@ -178,8 +178,13 @@ class RFDETRTensorRTEngine:
             
         person_scores = scores[:, self.person_class_id]
         
+        # 调试：打印最高分数的索引，判断类别是否对齐
+        max_idx_overall = np.argmax(scores)
+        row_idx = max_idx_overall // scores.shape[1]
+        col_idx = max_idx_overall % scores.shape[1]
+        
         # 调试：打印前几个分数的最大值，帮助排查
-        print(f"RF-DETR Inference: Raw Max={np.max(logits_arr):.4f}, Final Max={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
+        print(f"RF-DETR Inference: Raw Max={np.max(logits_arr):.4f}, Final Max={np.max(person_scores):.4f}, Max Score Class={col_idx}, Threshold={self.conf_thres}")
 
         # 复制一份以防修改原数组
         boxes = boxes_arr.copy().astype(np.float32)

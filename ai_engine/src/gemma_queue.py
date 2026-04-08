@@ -113,6 +113,7 @@ class GemmaReviewQueue:
             
             if resp.status_code == 200:
                 answer = resp.json().get("content", "").strip().upper()
+                print(f"DEBUG: Gemma raw response: '{answer}' for image sent.")
                 
                 # 针对 Gemma 这种推理型模型的常见回答习惯做正则提取
                 if "YES" in answer or "TRUE" in answer or "确认" in answer or "有人" in answer:

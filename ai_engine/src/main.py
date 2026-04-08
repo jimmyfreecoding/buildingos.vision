@@ -38,6 +38,9 @@ def get_real_path(p):
         return p.replace("/app/models", os.path.join(project_root, "ai_engine/models"))
     if p.startswith("/app/ai_engine/config"):
         return p.replace("/app/ai_engine/config", os.path.join(project_root, "ai_engine/config"))
+    if p.startswith("/app/"):
+        # 通用映射：将容器根目录映射到宿主机的 ai_engine 目录
+        return p.replace("/app/", os.path.join(project_root, "ai_engine/"))
     return p
 
 def get_real_url(url, zlm_http_port=10081):
