@@ -481,10 +481,12 @@ def process_camera(cam_id, cam_info):
                         
                         # 【调试取证】将发送给 Gemma 的图片强行保存到本地，供人工核对 AI 到底在看什么
                         try:
-                            debug_path = get_real_path("/app/debug_gemma.jpg")
+                            # 修正宿主机下的路径映射，确保 debug_gemma.jpg 产生在项目根目录
+                            debug_path = os.path.join(os.path.expanduser("~"), "buildingos.vision/ai_engine/debug_gemma.jpg")
                             cv2.imwrite(debug_path, annotated_frame)
-                        except:
-                            pass
+                            # print(f"DEBUG: Saved evidence to {debug_path}")
+                        except Exception as e:
+                            print(f"DEBUG: Failed to save evidence: {e}")
                             
                         gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
                     else:

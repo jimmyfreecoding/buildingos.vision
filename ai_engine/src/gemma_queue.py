@@ -95,17 +95,19 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 增强 Prompt：增加唯一标识 ID 引导模型针对当前图分析
-            unique_prompt = f"[img-1]当前时间戳:{time.time()}\n{prompt}"
+            # 3. 采用标准 Chat Template 强制模型进入对话模式，防止“复读指令”
+            # Gemma 2 官方模板: <start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n
+            chat_prompt = f"<start_of_turn>user\n[img-1]请仔细观察这幅图。\n{prompt}<end_of_turn>\n<start_of_turn>model\n"
             
             # 4. 组装 llama.cpp completion API 的请求体
             payload = {
-                "prompt": unique_prompt,
+                "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.0,  # 设置为 0，追求绝对的确定性，不发散
-                "n_predict": 16,     # 我们只需要极短的 YES/NO，多余的词汇会浪费推理时间
+                "temperature": 0.0,
+                "n_predict": 32,
                 "stream": False,
-                "cache_prompt": False # 显式禁用 Prompt 缓存
+                "cache_prompt": False,
+                "stop": ["<end_of_turn>", "user", "model"] # 强制停止符
             }
             
             # 5. 发起请求
@@ -113,15 +115,19 @@ class GemmaReviewQueue:
             
             if resp.status_code == 200:
                 answer = resp.json().get("content", "").strip().upper()
-                print(f"DEBUG: Gemma raw response: '{answer}' for image sent.")
+                print(f"DEBUG: Gemma raw response: '{answer}'")
                 
-                # 针对 Gemma 这种推理型模型的常见回答习惯做正则提取
-                if "YES" in answer or "TRUE" in answer or "确认" in answer or "有人" in answer:
+                # 严苛解析逻辑：必须是回答的开头包含关键词，且排除掉对指令的复读
+                # 如果回答太长且包含指令内容，则视为无效
+                if len(answer) > 100:
+                    return "NO" 
+
+                if "YES" in answer or "确认有人" in answer or "是的" in answer:
                     return "YES"
-                elif "NO" in answer or "FALSE" in answer or "没" in answer or "无人" in answer:
+                elif "NO" in answer or "无人" in answer or "没有" in answer:
                     return "NO"
                 else:
-                    return "UNKNOWN"
+                    return "NO" # 默认保守处理
             else:
                 print(f"❌ Gemma API 状态码异常: {resp.status_code}")
                 return "UNKNOWN"
