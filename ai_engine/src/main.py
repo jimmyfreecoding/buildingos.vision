@@ -475,6 +475,14 @@ def process_camera(cam_id, cam_info):
                     success, buffer = cv2.imencode('.jpg', annotated_frame)
                     if success:
                         jpg_bytes = buffer.tobytes()
+                        
+                        # 【调试取证】将发送给 Gemma 的图片强行保存到本地，供人工核对 AI 到底在看什么
+                        try:
+                            debug_path = get_real_path("/app/debug_gemma.jpg")
+                            cv2.imwrite(debug_path, annotated_frame)
+                        except:
+                            pass
+                            
                         gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
                     else:
                         log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")

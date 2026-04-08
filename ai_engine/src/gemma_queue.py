@@ -86,49 +86,52 @@ class GemmaReviewQueue:
     def _call_gemma_api(self, jpg_bytes, prompt):
         """实际发起 HTTP 请求到本地 llama.cpp 部署的 Gemma 服务"""
         try:
-            # 1. 图像转 Base64
+            # 1. 强制在请求前物理清理 Slot 缓存，防止模型受上一帧干扰 (项目记忆 01KNFKT7RT1JDQF7YPEB9XR8GT)
+            try:
+                requests.delete(self.gemma_slots_url, timeout=1.0)
+            except:
+                pass
+                
+            # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 2. 组装 llama.cpp completion API 的请求体
+            # 3. 增强 Prompt：增加唯一标识 ID 引导模型针对当前图分析
+            unique_prompt = f"[img-1]当前时间戳:{time.time()}\n{prompt}"
+            
+            # 4. 组装 llama.cpp completion API 的请求体
             payload = {
-                "prompt": f"[img-1]{prompt}",
+                "prompt": unique_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.1,  # 极低温度，追求确定性回答
-                "n_predict": 64,     # 限制输出长度，我们只需要简短的 YES/NO/UNKNOWN
-                "stream": False
+                "temperature": 0.0,  # 设置为 0，追求绝对的确定性，不发散
+                "n_predict": 16,     # 我们只需要极短的 YES/NO，多余的词汇会浪费推理时间
+                "stream": False,
+                "cache_prompt": False # 显式禁用 Prompt 缓存
             }
             
-            # 3. 发起请求
-            # print(f"🚀 发送请求至 Gemma: {prompt[:30]}...")
-            start_t = time.time()
+            # 5. 发起请求
             resp = requests.post(self.gemma_url, json=payload, timeout=15.0)
             
             if resp.status_code == 200:
                 answer = resp.json().get("content", "").strip().upper()
-                # print(f"⏱️ Gemma 耗时 {time.time()-start_t:.1f}s, 原始返回: {answer}")
                 
-                # 解析标准化结果
-                if "YES" in answer or "确认" in answer or "TRUE" in answer:
+                # 针对 Gemma 这种推理型模型的常见回答习惯做正则提取
+                if "YES" in answer or "TRUE" in answer or "确认" in answer or "有人" in answer:
                     return "YES"
-                elif "NO" in answer or "不" in answer or "FALSE" in answer:
+                elif "NO" in answer or "FALSE" in answer or "没" in answer or "无人" in answer:
                     return "NO"
                 else:
                     return "UNKNOWN"
-                    
             else:
-                print(f"❌ Gemma API 错误: {resp.status_code}")
+                print(f"❌ Gemma API 状态码异常: {resp.status_code}")
                 return "UNKNOWN"
                 
-        except requests.exceptions.Timeout:
-            print("❌ Gemma 请求超时 (>15s)")
-            return "UNKNOWN"
         except Exception as e:
-            print(f"❌ Gemma 调用失败: {e}")
+            print(f"❌ Gemma 调用过程中发生崩溃: {e}")
             return "UNKNOWN"
         finally:
-            # 释放上下文缓存机制 (项目记忆 01KNFKT7RT1JDQF7YPEB9XR8GT)
+            # 请求完成后再次清理，释放显存
             try:
-                requests.delete(self.gemma_slots_url, timeout=2.0)
+                requests.delete(self.gemma_slots_url, timeout=1.0)
             except:
                 pass
 
