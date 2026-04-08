@@ -13,10 +13,55 @@ from yolo_infer import YoloTensorRTEngine
 from rfdetr_trt_infer import RFDETRTensorRTEngine
 from state_machine import PresenceStateMachine, SmokingStateMachine
 from gemma_queue import gemma_queue
+import paho.mqtt.client as mqtt
+
+# --- Environment Detection & Path/URL Translation Helpers ---
+def is_in_container():
+    return os.path.exists("/.dockerenv")
+
+def get_real_path(p):
+    """
+    自适应路径转换：
+    如果检测到不在容器内运行 (没有 /.dockerenv)，
+    则将容器内的标准路径 /app/... 映射到宿主机的物理路径。
+    """
+    if is_in_container():
+        return p
+    
+    # 获取宿主机项目根目录 (假设在 ~/buildingos.vision)
+    home = os.path.expanduser("~")
+    project_root = os.path.join(home, "buildingos.vision")
+    
+    if p.startswith("/app/www"):
+        return p.replace("/app/www", os.path.join(project_root, "zlm/www"))
+    if p.startswith("/app/models"):
+        return p.replace("/app/models", os.path.join(project_root, "ai_engine/models"))
+    if p.startswith("/app/ai_engine/config"):
+        return p.replace("/app/ai_engine/config", os.path.join(project_root, "ai_engine/config"))
+    return p
+
+def get_real_url(url, zlm_http_port=10081):
+    """
+    自适应 URL 转换：
+    如果在宿主机运行，将容器名 'zlm:80' 替换为 '127.0.0.1:10081'。
+    """
+    if is_in_container():
+        return url
+    
+    # 替换 API URL
+    if "zlm:80" in url:
+        return url.replace("zlm:80", f"127.0.0.1:{zlm_http_port}")
+    
+    # 额外处理 rtsp 地址
+    if "rtsp://zlm:554" in url:
+        # 这里的 10554 是宿主机映射出的端口
+        return url.replace("zlm:554", "127.0.0.1:10554")
+        
+    return url
 
 # --- Load Configuration ---
-CONFIG_PATH = os.getenv("CONFIG_PATH", "/app/ai_engine/config/config.json")
-DEFAULT_CONFIG_PATH = "/app/ai_engine/config/config.default.json"
+CONFIG_PATH = os.getenv("CONFIG_PATH", get_real_path("/app/ai_engine/config/config.json"))
+DEFAULT_CONFIG_PATH = get_real_path("/app/ai_engine/config/config.default.json")
 
 def load_config():
     # --- 自动初始化配置文件机制 ---
@@ -56,7 +101,7 @@ def get_unified_cameras(cfg):
         if not cam_id: continue
         cameras[cam_id] = {
             "source_url": cam.get("source_url"),
-            "url": cam.get("url"), # 这是内部 zlm 的代理地址
+            "url": get_real_url(cam.get("url"), ZLM_HTTP_PORT), # 这是内部 zlm 的代理地址，需自适应
             "areaCode": cam.get("areaCode", "UNKNOWN"),
             "enabled": True,
             "tasks": ["presence"]
@@ -73,7 +118,7 @@ def get_unified_cameras(cfg):
         else:
             cameras[cam_id] = {
                 "source_url": cam.get("source_url"),
-                "url": cam.get("url"), # 这是内部 zlm 的代理地址
+                "url": get_real_url(cam.get("url"), ZLM_HTTP_PORT), # 这是内部 zlm 的代理地址，需自适应
                 "areaCode": cam.get("areaCode", "UNKNOWN"),
                 "enabled": True,
                 "tasks": ["smoking"]
@@ -119,10 +164,10 @@ def init_tensorrt_models():
             detector_cfg = ai_config.get("detector", {})
             presence_backend = detector_cfg.get("presence_backend", "yolo").lower()
             presence_conf = float(detector_cfg.get("presence_conf", 0.25))
-            fallback_yolo_path = detector_cfg.get("fallback_yolo_engine_path", "/app/models/yolo26m-pose.engine")
+            fallback_yolo_path = get_real_path(detector_cfg.get("fallback_yolo_engine_path", "/app/models/yolo26m-pose.engine"))
             if presence_backend == "rfdetr_trt":
                 try:
-                    presence_engine_path = detector_cfg.get("presence_engine_path", "/app/models/rf-detr-fp16-576.engine")
+                    presence_engine_path = get_real_path(detector_cfg.get("presence_engine_path", "/app/models/rf-detr-fp16-576.engine"))
                     person_class_id = int(detector_cfg.get("person_class_id", 0))
                     max_det = int(detector_cfg.get("max_det", 100))
                     pose_model = RFDETRTensorRTEngine(
@@ -137,17 +182,17 @@ def init_tensorrt_models():
                     pose_model = YoloTensorRTEngine(fallback_yolo_path, conf_thres=presence_conf)
                     presence_detector_source = "yolo26m-pose"
             else:
-                presence_engine_path = detector_cfg.get("presence_engine_path", fallback_yolo_path)
+                presence_engine_path = get_real_path(detector_cfg.get("presence_engine_path", fallback_yolo_path))
                 pose_model = YoloTensorRTEngine(presence_engine_path, conf_thres=presence_conf)
                 presence_detector_source = "yolo26m-pose"
 
-            smoking_engine_path = detector_cfg.get("smoking_engine_path", "/app/models/smoking_26m.engine")
+            smoking_engine_path = get_real_path(detector_cfg.get("smoking_engine_path", "/app/models/smoking_26m.engine"))
             smoking_conf = float(detector_cfg.get("smoking_conf", 0.3))
             smoking_model = YoloTensorRTEngine(smoking_engine_path, conf_thres=smoking_conf)
             print("Models loaded successfully.")
         except Exception as e:
             print(f"Failed to load TensorRT engines: {e}")
-            print("Please check detector config and engine files under /app/models")
+            print("Please check detector config and engine files")
 
 # --- MQTT Setup ---
 MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
@@ -175,7 +220,7 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
     追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
     """
     try:
-        log_dir_base = config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs")
+        log_dir_base = get_real_path(config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs"))
         today_str = datetime.now().strftime("%Y-%m-%d")
         safe_area = str(area_code).replace('/', '_').replace('\\', '_')
         target_dir = os.path.join(log_dir_base, today_str, safe_area)
@@ -260,7 +305,7 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
         
         # --- 本地持久化 (供 Web 界面场景检测结果展示) ---
         try:
-            log_dir_base = config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs")
+            log_dir_base = get_real_path(config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs"))
             today_str = datetime.now().strftime("%Y-%m-%d")
             # 清理 area_code 中的非法路径字符
             safe_area = str(area_code).replace('/', '_').replace('\\', '_')
@@ -544,9 +589,9 @@ def register_cameras_to_zlm():
             continue
             
         # 注意：这里调用的是宿主机或者 Docker 内部网络名
-        # 由于 ai-engine 运行在宿主机，必须使用 127.0.0.1 和映射出来的 10081 端口
-        zlm_api_base = config.get("zlm", {}).get("api_url", "http://127.0.0.1:10081/index/api").replace("/index/api", "")
-        api_url = f"{zlm_api_base}/index/api/addStreamProxy"
+        # 使用 get_real_url 实现自适应：如果在宿主机运行，将 zlm:80 替换为 127.0.0.1:10081
+        api_url_raw = config.get("zlm", {}).get("api_url", "http://zlm:80/index/api")
+        api_url = get_real_url(api_url_raw, ZLM_HTTP_PORT)
         params = {
             "secret": ZLM_API_SECRET,
             "vhost": "__defaultVhost__",
@@ -566,7 +611,9 @@ def register_cameras_to_zlm():
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
                 if res_data.get("code") == 0:
-                    print(f"[{cam_id}] ZLM Proxy configured. Live at rtsp://127.0.0.1:{ZLM_RTSP_PORT}/live/{cam_id}")
+                    # 播放地址同样需要自适应转换显示
+                    play_url = get_real_url(f"rtsp://zlm:554/live/{cam_id}")
+                    print(f"[{cam_id}] ZLM Proxy configured. Live at {play_url}")
                 else:
                     print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}")
         except Exception as e:
