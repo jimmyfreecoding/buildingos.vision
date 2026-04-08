@@ -44,6 +44,7 @@
 
 - Python 3.10（建议）
 - **核心运行时依赖：**
+  - `ffmpeg` (宿主机必须安装，用于 RTSP 抓拍采样)
   - `tensorrt` (由 JetPack 系统提供，需通过 `--system-site-packages` 穿透进入 venv)
   - `pycuda` (GPU 内存管理，通过 requirements.txt 安装)
 - TensorRT 运行时与 `.engine` 序列化版本必须一致
@@ -174,7 +175,8 @@ export CUDA_ROOT=/usr/local/cuda
 export CPATH=/usr/local/cuda/include:$CPATH
 export LIBRARY_PATH=/usr/local/cuda/lib64:$LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-# 4. 安装业务依赖
+# 4. 安装 ffmpeg 及业务依赖
+sudo apt-get update && sudo apt-get install -y ffmpeg
 pip install -U pip
 pip install -r requirements.txt
 # 5. 手动安装 pycuda (确保环境变量生效)
@@ -251,6 +253,7 @@ git pull origin main && \
 docker compose -f docker-compose.yml up -d --build && \
 # 3. 准备 ai-engine 宿主环境 (开启系统包穿透)
 cd ai_engine && \
+sudo apt-get update && sudo apt-get install -y ffmpeg && \
 python3 -m venv --system-site-packages .venv && \
 export PATH=/usr/local/cuda/bin:$$PATH && \
 export CUDA_ROOT=/usr/local/cuda && \

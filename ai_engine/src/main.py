@@ -96,28 +96,6 @@ def run_flask():
 def is_in_container():
     return os.path.exists("/.dockerenv")
 
-# 全局变量，记录检测到的 ffmpeg 路径
-FFMPEG_BINARY = "ffmpeg"
-
-def detect_ffmpeg():
-    global FFMPEG_BINARY
-    import shutil
-    
-    # 1. 尝试从 PATH 中获取
-    path_ffmpeg = shutil.which("ffmpeg")
-    if path_ffmpeg:
-        FFMPEG_BINARY = path_ffmpeg
-        return True
-        
-    # 2. 尝试常见绝对路径 (针对宿主机 systemd 环境)
-    common_paths = ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/snap/bin/ffmpeg", "/usr/bin/ffmpeg.exe"]
-    for p in common_paths:
-        if os.path.exists(p):
-            FFMPEG_BINARY = p
-            return True
-            
-    return False
-
 def get_real_path(p):
     """
     自适应路径转换：
@@ -315,10 +293,13 @@ try:
     print(f"Connecting to MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}...")
     mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
     mqtt_client.loop_start()
-    print("MQTT Connected.")
+    print("✅ MQTT Connected.")
 except Exception as e:
-    print(f"Error connecting to MQTT: {e}")
-    print("WARNING: MQTT connection failed, but AI Engine will continue to run without publishing events.")
+    print(f"❌ Error connecting to MQTT: {e}")
+    if "[Errno 111]" in str(e):
+        print("   💡 TIP: Connection refused. This usually means the MQTT Broker (EMQX/Mosquitto) is not running.")
+        print("   💡 Try starting it: 'sudo systemctl start emqx' or 'sudo docker compose up -d' if using Docker.")
+    print("   WARNING: AI Engine will continue to run without publishing events.")
 
 def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0):
     """
@@ -480,8 +461,9 @@ def get_frame_from_host_ffmpeg(cam_id):
     # -i: 输入流
     # -frames:v 1: 只截取一帧
     # -f image2: 输出格式为图片
+    # 注意：FFmpeg 必须已安装在宿主机 PATH 中
     cmd = [
-        FFMPEG_BINARY, 
+        "ffmpeg", 
         "-rtsp_transport", "tcp", 
         "-y", 
         "-i", local_rtsp_url, 
@@ -794,16 +776,14 @@ if __name__ == "__main__":
     print("Starting AI Engine (Dual-Stage Architecture)...")
     
     # 检查 ffmpeg 是否存在，防止后续抓拍静默失败
-    if not detect_ffmpeg():
+    import shutil
+    if not shutil.which("ffmpeg"):
         print("\n" + "!"*60)
-        print("CRITICAL ERROR: 'ffmpeg' not found in system PATH or common locations!")
+        print("CRITICAL ERROR: 'ffmpeg' not found in system PATH!")
         print("This AI Engine requires FFmpeg to capture snapshots from RTSP streams.")
-        print("Current PATH:", os.environ.get("PATH", ""))
-        print("Please install FFmpeg on the host system:")
+        print("Please follow the setup guide in docs/cicd.md to install it:")
         print("  sudo apt-get update && sudo apt-get install -y ffmpeg")
         print("!"*60 + "\n")
-    else:
-        print(f"✅ FFmpeg detected at: {FFMPEG_BINARY}")
     
     # 注册 ZLM 代理 (项目核心记忆: 动态拉流)
     zlm_thread = threading.Thread(target=register_cameras_to_zlm)
