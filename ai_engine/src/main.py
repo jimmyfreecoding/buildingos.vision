@@ -591,7 +591,13 @@ def register_cameras_to_zlm():
         # 注意：这里调用的是宿主机或者 Docker 内部网络名
         # 使用 get_real_url 实现自适应：如果在宿主机运行，将 zlm:80 替换为 127.0.0.1:10081
         zlm_api_root = get_real_url(config.get("zlm", {}).get("api_url", "http://zlm:80/index/api"), ZLM_HTTP_PORT)
-        api_url = f"{zlm_api_root}/addStreamProxy"
+        
+        # 彻底解决 URL 拼接可能导致的 404 问题：确保路径包含 addStreamProxy
+        if not zlm_api_root.endswith("/addStreamProxy"):
+            api_url = f"{zlm_api_root.rstrip('/')}/addStreamProxy"
+        else:
+            api_url = zlm_api_root
+
         params = {
             "secret": ZLM_API_SECRET,
             "vhost": "__defaultVhost__",

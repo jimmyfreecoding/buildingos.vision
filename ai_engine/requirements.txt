@@ -1,7 +1,11 @@
-ultralytics
 paho-mqtt
 requests
 flask
 pyyaml
 roboflow
-pycuda
+psutil
+tqdm
+matplotlib
+colorama
+polars
+ultralytics-thop

@@ -165,12 +165,20 @@ WantedBy=multi-user.target
 cd ~/buildingos.vision/ai_engine
 # 1. 彻底删除旧 venv (如有)
 rm -rf .venv
-# 2. 重新创建 venv 并开启系统包穿透 (关键: 访问系统级 TensorRT/OpenCV)
+# 2. 重新创建 venv 并开启系统包穿透
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-# 3. 安装业务依赖
+# 3. 设置 CUDA 编译环境 (关键: 防止 pycuda 编译失败)
+export PATH=/usr/local/cuda/bin:$PATH
+export CUDA_ROOT=/usr/local/cuda
+export CPATH=/usr/local/cuda/include:$CPATH
+export LIBRARY_PATH=/usr/local/cuda/lib64:$LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+# 4. 安装业务依赖
 pip install -U pip
 pip install -r requirements.txt
+# 5. 手动安装 pycuda (确保环境变量生效)
+pip install pycuda==2024.1.2
 ```
 
 ### 6.2 安装并启动 systemd 服务
@@ -236,8 +244,13 @@ docker compose -f docker-compose.yml up -d --build && \
 # 3. 准备 ai-engine 宿主环境 (开启系统包穿透)
 cd ai_engine && \
 python3 -m venv --system-site-packages .venv && \
+export PATH=/usr/local/cuda/bin:$$PATH && \
+export CUDA_ROOT=/usr/local/cuda && \
+export CPATH=/usr/local/cuda/include:$$CPATH && \
+export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH && \
 .venv/bin/pip install -U pip && \
 .venv/bin/pip install -r requirements.txt && \
+.venv/bin/pip install pycuda==2024.1.2 && \
 # 4. 安装并启动 systemd 服务
 sudo cp ~/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engine.service && \
 sudo systemctl daemon-reload && \
