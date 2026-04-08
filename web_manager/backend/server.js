@@ -430,9 +430,9 @@ app.get('/api/occupancy/logs', (req, res) => {
 });
 
 // --- 6. Gemma Local Model API ---
-const GEMMA_HOST = process.env.GEMMA_HOST || '172.17.0.1'; // Default docker bridge to host
+const GEMMA_HOST = process.env.GEMMA_HOST || 'host.docker.internal'; // 优先连接宿主机直跑的 Gemma
 const GEMMA_PORT = process.env.GEMMA_PORT || 8080;
-const AI_ENGINE_HOST = process.env.AI_ENGINE_HOST || 'ai-engine';
+const AI_ENGINE_HOST = process.env.AI_ENGINE_HOST || 'host.docker.internal'; // AI Engine 在宿主机直跑
 const AI_ENGINE_PORT = process.env.AI_ENGINE_PORT || 5000;
 
 app.post('/api/ai/test', (req, res) => {

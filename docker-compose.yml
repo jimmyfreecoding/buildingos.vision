@@ -104,6 +104,7 @@ services:
       # 统一使用 ZLM_API_SECRET 环境变量
       - ZLM_API_SECRET=buildingos_edge_secret_2026
     extra_hosts:
+      - "host.docker.internal:host-gateway"
       - "buildingos-emqx-prod:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # 允许控制重启容器
