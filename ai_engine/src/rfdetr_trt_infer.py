@@ -134,6 +134,27 @@ class RFDETRTensorRTEngine:
         scale_y = self.input_h / orig_h
         return x, scale_x, scale_y, orig_w, orig_h
 
+    def _infer(self, input_tensor):
+        cuda = self.cuda
+        np.copyto(self.tensor_meta[self.input_name]["host"], input_tensor.ravel())
+        cuda.memcpy_htod_async(self.tensor_meta[self.input_name]["device"], self.tensor_meta[self.input_name]["host"], self.stream)
+
+        try:
+            self.context.execute_async_v3(stream_handle=self.stream.handle)
+        except Exception:
+            self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+
+        outputs = {}
+        for name in self.output_names:
+            meta = self.tensor_meta[name]
+            cuda.memcpy_dtoh_async(meta["host"], meta["device"], self.stream)
+        self.stream.synchronize()
+
+        for name in self.output_names:
+            meta = self.tensor_meta[name]
+            outputs[name] = np.array(meta["host"]).reshape(meta["shape"])
+        return outputs
+
     def _parse_outputs(self, outputs, scale_x, scale_y, orig_w, orig_h):
         # 查找输出张量
         logits_arr = None
