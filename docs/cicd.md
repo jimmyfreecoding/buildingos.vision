@@ -43,6 +43,9 @@
 ### 2.2 运行时与推理栈
 
 - Python 3.10（建议）
+- **核心运行时依赖：**
+  - `tensorrt` (由 JetPack 系统提供，需通过 `--system-site-packages` 穿透进入 venv)
+  - `pycuda` (GPU 内存管理，通过 requirements.txt 安装)
 - TensorRT 运行时与 `.engine` 序列化版本必须一致
   - 例如：运行时 `Current Version: 239` 时，`engine` 也必须是 `239` 生成
 - CUDA 驱动由 JetPack 提供，不在项目内重复安装
@@ -160,8 +163,12 @@ WantedBy=multi-user.target
 
 ```bash
 cd ~/buildingos.vision/ai_engine
-python3 -m venv .venv
+# 1. 彻底删除旧 venv (如有)
+rm -rf .venv
+# 2. 重新创建 venv 并开启系统包穿透 (关键: 访问系统级 TensorRT/OpenCV)
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
+# 3. 安装业务依赖
 pip install -U pip
 pip install -r requirements.txt
 ```
@@ -226,9 +233,9 @@ git reset --hard HEAD && \
 git pull origin main && \
 # 2. 启动 Docker 服务 (不含 ai-engine)
 docker compose -f docker-compose.yml up -d --build && \
-# 3. 准备 ai-engine 宿主环境
+# 3. 准备 ai-engine 宿主环境 (开启系统包穿透)
 cd ai_engine && \
-python3 -m venv .venv && \
+python3 -m venv --system-site-packages .venv && \
 .venv/bin/pip install -U pip && \
 .venv/bin/pip install -r requirements.txt && \
 # 4. 安装并启动 systemd 服务

@@ -590,8 +590,8 @@ def register_cameras_to_zlm():
             
         # 注意：这里调用的是宿主机或者 Docker 内部网络名
         # 使用 get_real_url 实现自适应：如果在宿主机运行，将 zlm:80 替换为 127.0.0.1:10081
-        api_url_raw = config.get("zlm", {}).get("api_url", "http://zlm:80/index/api")
-        api_url = get_real_url(api_url_raw, ZLM_HTTP_PORT)
+        zlm_api_root = get_real_url(config.get("zlm", {}).get("api_url", "http://zlm:80/index/api"), ZLM_HTTP_PORT)
+        api_url = f"{zlm_api_root}/addStreamProxy"
         params = {
             "secret": ZLM_API_SECRET,
             "vhost": "__defaultVhost__",
