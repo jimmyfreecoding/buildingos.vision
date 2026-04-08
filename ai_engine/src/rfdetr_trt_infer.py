@@ -17,9 +17,7 @@ class RFDETRTensorRTEngine:
         try:
             import tensorrt as trt
             import pycuda.driver as cuda
-            # 移除 autoinit，改用手动管理 Context 以支持多线程 (invalid resource handle 修复)
-            if not cuda.was_initialized():
-                cuda.init()
+            import pycuda.autoinit  # noqa: F401
         except Exception as e:
             raise RuntimeError(f"RF-DETR TensorRT runtime dependencies missing: {e}")
 
@@ -27,30 +25,25 @@ class RFDETRTensorRTEngine:
         self.cuda = cuda
         self.logger = trt.Logger(trt.Logger.WARNING)
         
-        # 为当前进程/线程创建一个独立的设备上下文
-        self.device = cuda.Device(0)
-        self.cuda_context = self.device.make_context()
+        # 使用 autoinit 创建的全局上下文
+        self.cuda_context = cuda.Context.get_current()
         
-        try:
-            with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
-                self.engine = runtime.deserialize_cuda_engine(f.read())
-            if self.engine is None:
-                raise RuntimeError(f"Failed to deserialize engine: {engine_path}")
+        with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
+            self.engine = runtime.deserialize_cuda_engine(f.read())
+        if self.engine is None:
+            raise RuntimeError(f"Failed to deserialize engine: {engine_path}")
 
-            self.context = self.engine.create_execution_context()
-            if self.context is None:
-                raise RuntimeError("Failed to create TensorRT execution context")
+        self.context = self.engine.create_execution_context()
+        if self.context is None:
+            raise RuntimeError("Failed to create TensorRT execution context")
 
-            self.stream = cuda.Stream()
-            self.input_name = None
-            self.output_names = []
-            self.tensor_meta = {}
-            self.bindings = []
+        self.stream = cuda.Stream()
+        self.input_name = None
+        self.output_names = []
+        self.tensor_meta = {}
+        self.bindings = []
 
-            self._init_io()
-        finally:
-            # 初始化完成后暂时 pop 掉，predict 时再 push
-            self.cuda_context.pop()
+        self._init_io()
 
     def _init_io(self):
         trt = self.trt

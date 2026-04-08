@@ -3,6 +3,7 @@ import queue
 import time
 import requests
 import base64
+import os
 
 class GemmaReviewQueue:
     """
