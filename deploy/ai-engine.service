@@ -1,0 +1,19 @@
+[Unit]
+Description=BuildingOS AI Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=buildingos
+Group=buildingos
+WorkingDirectory=/home/buildingos/buildingos.vision/ai_engine
+Environment=PYTHONUNBUFFERED=1
+Environment=CONFIG_PATH=/home/buildingos/buildingos.vision/ai_engine/config/config.json
+ExecStart=/home/buildingos/buildingos.vision/ai_engine/.venv/bin/python3 /home/buildingos/buildingos.vision/ai_engine/src/main.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

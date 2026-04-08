@@ -44,6 +44,7 @@ services:
 
   # AI 推理引擎 (关键，使用 GPU)
   ai-engine:
+    profiles: ["legacy-ai-engine"]
     build: 
       context: ./ai_engine
       dockerfile: Dockerfile
@@ -90,22 +91,13 @@ services:
       - zlm
     restart: always
 
-  # 业务逻辑编排 (Node-RED)
-  node-red:
-    image: nodered/node-red:latest
-    ports:
-      - "11880:1880"
-    extra_hosts:
-      - "buildingos-emqx-prod:host-gateway"
-    volumes:
-      - node_red_data:/data # 使用命名卷
-    restart: always
-
   # 边缘网关管理系统后端 (Web Manager API)
   web-manager-backend:
     build:
       context: ./web_manager/backend
       dockerfile: Dockerfile
+    pid: host
+    privileged: true
     ports:
       - "3000:3000"
     environment:
@@ -122,22 +114,23 @@ services:
       - zlm_www_data:/app/www # 挂载静态文件目录以读取算法日志
     restart: always
 
-  # Docker 可视化管理 (Portainer)
-  portainer:
-    image: portainer/portainer-ce:latest
+  # Docker Compose 可视化管理 (Dockge)
+  dockge:
+    image: louislam/dockge:1
     ports:
-      - "9000:9000"
+      - "5001:5001"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
+      - ./dockge/data:/app/data
+      - ./dockge/stacks:/opt/stacks
+    environment:
+      - DOCKGE_STACKS_DIR=/opt/stacks
     restart: always
 
 # 声明所有的命名卷 (Docker 自动管理权限，物理存储在 /var/lib/docker/volumes/)
 volumes:
   zlm_www_data:
   web_frontend_data:
-  node_red_data:
-  portainer_data:
 
 # 定义自定义网络，避开 10.0.x.x 等常见物理局域网网段，防止路由冲突 (host is unreachable)
 networks:

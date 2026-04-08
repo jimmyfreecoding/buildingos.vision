@@ -1,92 +1,268 @@
-# 边缘网关 CI/CD 与 OTA 升级方案
+# 边缘网关 CI/CD 与 OTA 升级方案（ai-engine 宿主机化）
 
-本文档描述了如何在国内受限网络环境下，通过部署在 Jetson Orin Nano 上的 `web_manager`，实现对 AI 推理引擎 (`ai_engine`) 等核心服务的 OTA（Over-The-Air）热更新与 CI/CD 流水线落地。
+本文档定义新的生产部署策略：**仅 `ai-engine` 从 Docker 中迁出，改为宿主机常驻运行；其余服务继续 Docker 化运行**。  
+目标是降低 Jetson 端构建复杂度、缩短故障恢复路径，并保持 OTA 能力。
 
 ---
 
-## 1. 架构设计：基于 Web Manager 的轻量级 OTA
+## 1. 架构基线：混合部署（Host + Docker）
 
-在边缘计算场景中，由于设备通常部署在内网且缺乏公网独立 IP，无法被动接收云端 CI/CD（如 GitHub Actions, Jenkins）的 Webhook 推送。
+### 1.1 服务边界
 
-因此，我们采用 **“边缘主动拉取 (Pull) + 本地重构”** 的策略。让 `web_manager` 后端充当本地的运维机器人。
+- **宿主机运行（systemd 托管）**
+  - `ai-engine`
+- **Docker 运行（保持不变）**
+  - `zlm`
+  - `web-nginx`
+  - `web-manager-backend`
+  - `web-manager-frontend-deploy`
+  - `dockge`
+- **Docker 运行（仅回滚时启用）**
+  - `ai-engine`（`legacy-ai-engine` profile）
 
-### 1.1 核心特权挂载
-为了让 `web_manager` (Node.js) 拥有控制其他业务容器的权限，在 `docker-compose.yml` 中必须为其挂载特权：
+### 1.2 这样做的原因
 
-```yaml
-  web-manager:
-    image: node:18-alpine
-    # ... 其他配置
-    volumes:
-      # 1. 挂载 docker.sock，赋予它执行 docker 命令、控制其他容器的权力
-      - /var/run/docker.sock:/var/run/docker.sock
-      # 2. 将宿主机的项目根目录挂载进去，使其能执行 docker-compose 命令
-      - /home/jetson/buildingos.vision:/host_project
+- 避免 `ai-engine` 在 Jetson 上反复 `docker build` 带来的高耗时、高磁盘占用与依赖不确定性。
+- 避免容器内 TensorRT/PyCUDA/动态库耦合导致的构建失败或运行时崩溃。
+- 保留其余服务容器化，继续享受网络隔离、统一编排和运维便利。
+
+---
+
+## 2. ai-engine 宿主机环境要求（详细）
+
+### 2.1 操作系统与硬件
+
+- Jetson Orin Nano 8GB（生产目标机型）
+- JetPack 6.x（建议与当前量产机保持一致）
+- 可用磁盘空间建议：
+  - 系统和依赖预留：>= 10GB
+  - 模型和日志预留：>= 20GB
+
+### 2.2 运行时与推理栈
+
+- Python 3.10（建议）
+- TensorRT 运行时与 `.engine` 序列化版本必须一致
+  - 例如：运行时 `Current Version: 239` 时，`engine` 也必须是 `239` 生成
+- CUDA 驱动由 JetPack 提供，不在项目内重复安装
+
+### 2.3 Python 依赖策略
+
+- 必须使用**项目独立虚拟环境**（venv）
+- 依赖由 `ai_engine/requirements.txt` 管理
+- 不允许在系统全局 Python 做长期运行依赖安装
+
+### 2.4 目录与权限约定
+
+- 项目根目录：`~/buildingos.vision`
+- ai-engine 工作目录：`~/buildingos.vision/ai_engine`
+- 配置文件：`~/buildingos.vision/ai_engine/config/config.json`
+- 模型目录：`~/buildingos.vision/ai_engine/models`
+- 运行账号需对上述目录有读写权限
+
+---
+
+## 3. “系统污染”定义、场景与规避
+
+### 3.1 系统污染是什么
+
+- 不是“中毒”，而是**宿主机运行环境被长期改写**，导致后续不可预期。
+
+### 3.2 常见污染场景
+
+- 同一台机上 `pip install -U` 把全局包升级，旧代码突然跑不起来。
+- A 项目升级 `numpy/torch`，B 项目跟着崩（共用全局 `site-packages`）。
+- `apt upgrade` 后系统库变动，某些 Python/CUDA 扩展二进制不兼容。
+- 临时装的包忘了记录，半年后没人知道“当时为什么能跑”。
+- 手工改环境变量（`PATH`/`LD_LIBRARY_PATH`）后，服务重启顺序一变就失效。
+
+### 3.3 规避策略（必须执行）
+
+- 永远用独立 `venv`。
+- 用 `requirements.txt` 锁定运行依赖版本。
+- `systemd` 的 `ExecStart` 只指向该 `venv` 的 Python。
+- 将运行时环境变量写入 `systemd` unit，不依赖手工 `export`。
+
+---
+
+## 4. OTA 链路改造（从容器更新到宿主服务更新）
+
+### 4.1 关键变化
+
+- 以前：`docker compose pull/up -d ai-engine`
+- 现在：`git pull` 后执行 `systemctl restart ai-engine`
+
+这不是 OTA 失效，而是从“容器编排更新”变成“代码更新 + 宿主服务重启”。
+
+### 4.2 Web Manager 的执行分支
+
+`web-manager-backend` 目前通过 `docker.sock` 控制容器。迁移后应保留两条分支：
+
+1. **Docker 分支（其他服务）**：继续使用 `docker compose ...`
+2. **Host 分支（ai-engine）**：执行宿主机 `systemctl` 命令
+
+推荐更新命令序列：
+
+```bash
+cd /host_project && \
+git pull && \
+sudo systemctl restart ai-engine && \
+sudo systemctl status ai-engine --no-pager -n 50
 ```
 
 ---
 
-## 2. 应对国内网络环境的升级策略
+## 5. systemd 稳定性说明与基线配置
 
-在国内直接在边缘端执行 `git pull` 和 `docker build` 极易因网络问题卡死，且编译过程会消耗大量边缘算力。
+### 5.1 systemd 脆弱吗
 
-工业级的最佳实践是：**“云端编译，边缘拉包” (Registry 模式)**。
+- 不脆弱，反而是 Linux 生产常规方案。
+- 真正脆弱的是 unit 文件写得随意。
 
-### 2.1 云端持续集成 (CI)
-当代码或模型（`.pt` / `.engine`）更新推送到代码库后，由云端服务器触发构建，将最新的 `ai-engine` 打包成 Docker 镜像，并推送到国内的私有镜像仓库（如阿里云/腾讯云容器镜像服务）。
+### 5.2 稳定运行最小配置
 
-*示例镜像标签：`registry.cn-hangzhou.aliyuncs.com/buildingos/ai-engine:latest`*
+- `Restart=always`
+- `RestartSec=3`
+- `WorkingDirectory` 固定到项目目录
+- `ExecStart` 固定到 `venv` 的 Python
+- 明确 `Environment=CONFIG_PATH=...`
+- 使用 journald 收敛日志并配合日志轮转
 
-### 2.2 边缘端持续部署 (CD / OTA)
-当实施人员在 Web 界面点击“检查更新”，或设备收到云端的 MQTT 更新指令时，`web_manager` 后端将执行以下流程：
+### 5.3 参考 unit 文件
 
-1. **登录私有仓库** (若为私有镜像)。
-2. **拉取最新镜像**。
-3. **重启相关容器** (Docker 会自动使用新镜像替换旧容器，实现无缝升级)。
+```ini
+[Unit]
+Description=BuildingOS AI Engine
+After=network-online.target
+Wants=network-online.target
 
----
+[Service]
+Type=simple
+User=buildingos
+Group=buildingos
+WorkingDirectory=/home/buildingos/buildingos.vision/ai_engine
+Environment=CONFIG_PATH=/home/buildingos/buildingos.vision/ai_engine/config/config.json
+ExecStart=/home/buildingos/buildingos.vision/ai_engine/.venv/bin/python3 /home/buildingos/buildingos.vision/ai_engine/src/main.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
 
-## 3. 代码实现参考
-
-在 `web_manager/backend/server.js` 中增加 OTA 升级的 API 接口：
-
-```javascript
-const { exec } = require('child_process');
-
-app.post('/api/system/update', (req, res) => {
-    // 挂载到容器内的项目根目录
-    const projectDir = '/host_project'; 
-    
-    // 立即返回响应，避免前端 HTTP 请求超时
-    res.json({ message: 'Update started. System will pull latest code and rebuild containers.' });
-
-    // 组合命令：拉取最新镜像 -> 重启服务
-    const updateCommand = `
-        cd ${projectDir} && \
-        docker compose -f buildingos.vision.yml pull ai-engine && \
-        docker compose -f buildingos.vision.yml up -d ai-engine
-    `;
-
-    console.log('Executing OTA update...');
-    exec(updateCommand, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`OTA Update failed: ${error}`);
-            // 可在此处添加 MQTT 告警，通知云平台更新失败
-        } else {
-            console.log(`OTA Update success: ${stdout}`);
-            // 可在此处添加 MQTT 消息，通知云平台更新成功及最新版本号
-        }
-    });
-});
+[Install]
+WantedBy=multi-user.target
 ```
 
 ---
 
-## 4. 前端交互体验设计
+## 6. 部署与运维流程（宿主机版）
 
-由于拉取镜像和重启容器可能需要 1~5 分钟的时间，前端交互需进行妥善处理以防用户误操作：
+### 6.1 首次部署
 
-1. **发起请求**：用户点击“系统更新”。
-2. **全屏锁定**：前端调用 `/api/system/update` 成功后，立刻弹出 `v-loading` 全屏遮罩，提示文案：“系统正在从云端拉取最新算法并部署，请等待 3-5 分钟...”。
-3. **心跳轮询**：前端等待 10 秒后，开始每 5 秒向后端的 `/api/ping` 接口发送请求。
-4. **恢复界面**：当 `ping` 接口成功返回 200 OK，说明 `web_manager` 及依赖服务已全部重启完毕，此时前端取消遮罩并自动 `reload` 刷新页面。
+```bash
+cd ~/buildingos.vision/ai_engine
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+```
+
+### 6.2 安装并启动 systemd 服务
+
+```bash
+sudo cp /home/buildingos/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engine.service
+sudo systemctl daemon-reload
+sudo systemctl enable ai-engine
+sudo systemctl start ai-engine
+```
+
+### 6.3 日常操作
+
+```bash
+sudo systemctl status ai-engine --no-pager -n 80
+sudo systemctl restart ai-engine
+journalctl -u ai-engine -f
+```
+
+---
+
+## 7. 与 Docker 网络互通注意事项
+
+- `ai-engine` 在宿主机运行后，访问宿主本机服务可直接 `127.0.0.1`。
+- 访问 Docker 内服务时，使用对外映射端口（例如宿主机 `10081` 对应 `zlm:80`）。
+- 容器访问宿主的 `host.docker.internal` 规则继续保留给容器侧使用，不影响宿主侧。
+
+---
+
+## 8. 风险与回滚策略
+
+### 8.1 风险
+
+- 运维脚本若仍只会操作容器，可能出现“代码已更新但 ai-engine 未重启”。
+- 若跳过 `venv` 规范，系统污染风险会重新出现。
+
+### 8.2 回滚
+
+如需临时回滚到容器版：
+
+1. `sudo systemctl stop ai-engine`
+2. `sudo systemctl disable ai-engine`
+3. `docker compose -f docker-compose.yml --profile legacy-ai-engine up -d ai-engine`
+
+---
+
+## 10. 一键操作指令集 (One-click Commands)
+
+为提高运维效率，下述指令封装了混合架构下的核心操作。
+
+### 10.1 一键全新部署 (Fresh Deployment)
+适用于新设备初始化。执行前请确保已拉取代码。
+```bash
+cd ~/buildingos.vision && \
+# 1. 启动 Docker 服务 (不含 ai-engine)
+docker compose -f docker-compose.yml up -d --build && \
+# 2. 准备 ai-engine 宿主环境
+cd ai_engine && \
+python3 -m venv .venv && \
+.venv/bin/pip install -U pip && \
+.venv/bin/pip install -r requirements.txt && \
+# 3. 安装并启动 systemd 服务
+sudo cp ~/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engine.service && \
+sudo systemctl daemon-reload && \
+sudo systemctl enable ai-engine && \
+sudo systemctl start ai-engine && \
+sudo systemctl status ai-engine --no-pager -n 20
+```
+
+### 10.2 一键平滑升级 (OTA Update)
+适用于日常代码更新。
+```bash
+cd ~/buildingos.vision && \
+git pull && \
+# 1. 更新 Docker 容器 (如有配置/代码变更)
+docker compose -f docker-compose.yml up -d --build && \
+# 2. 重启宿主 ai-engine 服务
+sudo systemctl daemon-reload && \
+sudo systemctl restart ai-engine && \
+sudo systemctl status ai-engine --no-pager -n 20
+```
+
+### 10.3 一键资源清理 (System Cleanup)
+回收反复构建产生的磁盘垃圾（建议每季度执行一次）。
+```bash
+cd ~/buildingos.vision && \
+# 1. 移除孤儿容器与过时镜像
+docker compose down --remove-orphans && \
+docker image rm $(docker images -q buildingos-vision-ai-engine) 2>/dev/null || true && \
+# 2. 深度清理构建缓存 (关键: 回收 BuildKit 占用)
+docker builder prune -a -f && \
+# 3. 清理未使用的卷
+docker volume prune -f && \
+# 4. 重新拉起服务
+docker compose up -d
+```
+
+---
+
+## 11. 推荐结论
+
+- 在当前 Jetson 边缘部署条件下，`ai-engine` 宿主机化是优先方案。
+- 该方案前提是：`venv` 隔离、`systemd` 托管、OTA 流程切换到 `git pull + systemctl restart ai-engine`。
+- 其余服务保持 Docker，不做架构扰动。

@@ -3,7 +3,7 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install git and docker-cli for OTA updates
-RUN apk add --no-cache git docker-cli
+RUN apk add --no-cache git docker-cli util-linux
 
 # Copy package files
 COPY package*.json ./

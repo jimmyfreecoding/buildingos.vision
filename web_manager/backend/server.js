@@ -26,6 +26,7 @@ app.use(express.urlencoded({ limit: '20mb', extended: true }));
 const CONFIG_PATH = '/app/ai_engine/config/config.json';
 const DEFAULT_CONFIG_PATH = '/app/ai_engine/config/config.default.json';
 const PROJECT_DIR = '/host_project';
+const HOST_NSENTER = 'nsenter -t 1 -m -u -i -n -p --';
 
 // --- 自动初始化配置文件机制 ---
 if (!fs.existsSync(CONFIG_PATH)) {
@@ -57,7 +58,7 @@ io.on('connection', (socket) => {
     if (!logProcess) {
         // Spawn a process to tail docker logs
         // Using stdbuf or unbuffer might be needed depending on system, but tail -f usually works
-        logProcess = exec('docker logs -f buildingos-vision-ai-engine-1');
+        logProcess = exec(`${HOST_NSENTER} journalctl -u ai-engine -f -n 200 --no-pager`);
         
         logProcess.stdout.on('data', (data) => {
             const lines = data.split('\n');
@@ -215,19 +216,22 @@ app.post('/api/system/reboot', (req, res) => {
 
 // --- 2. OTA 升级 API ---
 app.post('/api/system/update', (req, res) => {
-    res.json({ message: 'Update started. System will pull latest code and rebuild containers.' });
+    res.json({ message: 'Update started. System will pull latest code and restart host ai-engine service.' });
 
     const updateCommand = `
         cd ${PROJECT_DIR} && \
         git reset --hard HEAD && \
         git pull origin main && \
-        docker compose -f buildingos.vision.yml up -d --build
+        ${HOST_NSENTER} systemctl daemon-reload && \
+        ${HOST_NSENTER} systemctl restart ai-engine && \
+        ${HOST_NSENTER} systemctl status ai-engine --no-pager -n 50
     `;
 
-    console.log('Executing OTA update (Git Pull + Docker Compose Build)...');
+    console.log('Executing OTA update (Git Pull + Host systemd restart)...');
     exec(updateCommand, (error, stdout, stderr) => {
         if (error) {
             console.error(`OTA Update failed: ${error}`);
+            if (stderr) console.error(stderr);
         } else {
             console.log(`OTA Update success: ${stdout}`);
         }
@@ -239,10 +243,8 @@ app.get('/api/ai/status', (req, res) => {
     try {
         const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : { streams: { smoking: [], occupancy: [] } };
         
-        // 我们通过检查 docker logs 中最后几百行来判断某个线程是否成功启动并输出过日志
-        // 或者简单点，如果有配置，且 AI 引擎容器正在运行，我们假定它们在 Running，否则在 Waiting/Error
-        exec('docker ps --filter "name=buildingos-vision-ai-engine-1" --format "{{.Status}}"', (err, stdout) => {
-            const isAiEngineUp = stdout && stdout.includes('Up');
+        exec(`${HOST_NSENTER} systemctl is-active ai-engine`, (err, stdout) => {
+            const isAiEngineUp = (stdout || '').trim() === 'active';
             
             let tasks = [];
             if (config.streams) {
@@ -357,12 +359,10 @@ app.post('/api/config', (req, res) => {
             console.error(`Failed to fetch media list from ZLM for sync:`, err);
         });
 
-        // 配置保存后，重启 ai-engine 容器使其生效
-        // 由于在容器内执行，我们直接重启指定的容器名
-        exec('docker restart buildingos-vision-ai-engine-1', (err) => {
-             if (err) console.error("Failed to restart ai-engine container:", err);
+        exec(`${HOST_NSENTER} systemctl restart ai-engine`, (err) => {
+             if (err) console.error("Failed to restart ai-engine host service:", err);
         });
-        res.json({ message: 'Config saved successfully, deleted streams cleared from ZLM, and AI Engine restarted.' });
+        res.json({ message: 'Config saved successfully, deleted streams cleared from ZLM, and ai-engine service restarted.' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
