@@ -118,15 +118,15 @@ class RFDETRTensorRTEngine:
         resized = cv2.resize(img, (self.input_w, self.input_h), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # 核心调整：恢复 Mean/Std 归一化。
-        # 如果模型输出异常（如致盲），请尝试注释掉 mean/std 减法，仅保留 / 255.0
+        # 【重要测试项】
+        # 如果模型分类完全牛头不对马嘴，极有可能是因为输入数据被“双重归一化”成了噪声。
+        # 建议测试：注释掉 mean/std 减法，仅保留 / 255.0
         x = rgb.astype(np.float32) / 255.0
+        
+        # 暂时开启：Mean/Std 归一化。
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         x = (x - mean) / std
-        
-        # 调试辅助：如果需要观察归一化后的图像（注意：归一化后会有负数，直接保存会变黑，需反向映射或仅观察缩放图）
-        # cv2.imwrite("/tmp/rfdetr_input_debug.jpg", resized) 
         
         x = np.transpose(x, (2, 0, 1))[None, ...]
         
@@ -164,58 +164,59 @@ class RFDETRTensorRTEngine:
                 break
         if main_tensor is None: return []
 
+        # 调试：观察前 3 个原始框的数值
+        # 如果 cx, cy 大于 1 或小于 0，说明模型输出的不是归一化的比例值
+        print(f"DEBUG RF-DETR Raw Tensor (first 3): \n{main_tensor[:3, :6]}")
+
         # 1. 拆分坐标和类别概率
-        # DETR 默认输出通常是 0-1 归一化的 [cx, cy, w, h]
         boxes_raw = main_tensor[:, :4]
         logits_raw = main_tensor[:, 4:84]
         
-        # 【重要】检查是否需要 Sigmoid
-        # 如果 logits_raw 里面有负数，说明是原始 Logits，需要 Sigmoid 转换为分数。
-        # 如果全是 0-1 之间，说明导出时已经包含了 Sigmoid，再次执行会导致分数大幅压缩。
-        if np.min(logits_raw) < 0:
-            scores = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
-        else:
-            scores = logits_raw
+        # 强制执行 Sigmoid 以获取分数
+        scores = 1 / (1 + np.exp(-np.clip(logits_raw, -15, 15)))
         
-        # 2. 坐标解码 (DETR 专用：中心点格式转矩形格式)
-        # 确认 boxes_raw 的范围。如果是 0-1 映射，直接乘原图宽高
-        cx, cy, bw, bh = boxes_raw[:, 0], boxes_raw[:, 1], boxes_raw[:, 2], boxes_raw[:, 3]
-        x1 = (cx - bw / 2.0) * orig_w
-        y1 = (cy - bh / 2.0) * orig_h
-        x2 = (cx + bw / 2.0) * orig_w
-        y2 = (cy + bh / 2.0) * orig_h
-        
-        # 3. 过滤结果
-        results = []
+        # 2. 过滤结果
         max_scores = np.max(scores, axis=1)
         max_indices = np.argmax(scores, axis=1)
         
-        # 使用动态传入的阈值或类成员默认值
         actual_conf_thres = float(conf_thres) if conf_thres is not None else self.conf_thres
         
-        # 调试：检测到最显著的物体信息
-        best_idx = np.argmax(max_scores)
-        best_score = max_scores[best_idx]
-        best_cls = int(max_indices[best_idx])
-        
-        if best_score > 0.1:
-            best_name = self.classes[best_cls] if best_cls < len(self.classes) else f"ID_{best_cls}"
-            # 自动探测类别偏移：如果“人”的分数在索引 1 显著高于索引 0，说明存在背景类
-            p0 = scores[best_idx, 0]
-            p1 = scores[best_idx, 1] if scores.shape[1] > 1 else 0
-            print(f"RF-DETR Detected: {best_name}({best_cls}) score={best_score:.3f} p0={p0:.3f} p1={p1:.3f}")
-
+        results = []
         for i in range(len(max_scores)):
             if max_scores[i] >= actual_conf_thres:
+                # 【关键修正】带保护的坐标解码
+                # 即使模型输出的是负数或异常值，我们也强制限制在图像范围内
+                cx, cy, bw, bh = boxes_raw[i]
+                
+                # 如果发现坐标依然不对（如图中万级负数），说明模型输出格式不是 [cx, cy, w, h] 0-1
+                x1 = (cx - bw / 2.0) * orig_w
+                y1 = (cy - bh / 2.0) * orig_h
+                x2 = (cx + bw / 2.0) * orig_w
+                y2 = (cy + bh / 2.0) * orig_h
+                
+                # 边界剪裁与合法性检查
+                x1, y1 = max(0, int(x1)), max(0, int(y1))
+                x2, y2 = min(orig_w, int(x2)), min(orig_h, int(y2))
+                
+                # 如果坐标完全越界（例如 x1 > x2），则跳过该框
+                if x1 >= x2 or y1 >= y2:
+                    continue
+
                 cls_id = int(max_indices[i])
-                # 注意：如果出现“类别张冠李戴”，通常是由于 COCO_CLASSES 缺少 'background' 导致位移
-                # 目前逻辑保持原样，通过日志确认偏移后再手动调整 classes 列表
+                # 注意：如果出现“类别张冠李戴”，通常是由于 COCO_CLASSES 顺序不匹配
+                # 或者是由于索引位移（例如 0 是背景类，需要 cls_id - 1）
                 results.append({
-                    "bbox": [int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i])],
+                    "bbox": [x1, y1, x2, y2],
                     "conf": float(max_scores[i]),
                     "class_id": cls_id,
                     "class_name": self.classes[cls_id] if cls_id < len(self.classes) else f"ID_{cls_id}"
                 })
+        
+        # 记录最显著物体的调试信息
+        if results:
+            best = max(results, key=lambda x: x['conf'])
+            print(f"RF-DETR Best Detection: {best['class_name']} conf={best['conf']:.3f} bbox={best['bbox']}")
+            
         return results
 
     def predict(self, img, conf_thres=None):
