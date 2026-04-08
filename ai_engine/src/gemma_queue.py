@@ -95,19 +95,19 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 采用标准 Chat Template 强制模型进入对话模式，防止“复读指令”
-            # Gemma 2 官方模板: <start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n
-            chat_prompt = f"<start_of_turn>user\n[img-1]请仔细观察这幅图。\n{prompt}<end_of_turn>\n<start_of_turn>model\n"
+            # 3. 极简 Prompt，彻底杜绝复读。
+            # 对于某些 llama.cpp 版本，[img-1] 可能会引起复读，我们改用最原始的格式。
+            chat_prompt = f"USER: [img-1]图中是否有真实的、活着的人？请仅回答 YES 或 NO。\nASSISTANT:"
             
-            # 4. 组装 llama.cpp completion API 的请求体
+            # 4. 组装请求体
             payload = {
                 "prompt": chat_prompt,
                 "image_data": [{"id": 1, "data": img_b64}],
                 "temperature": 0.0,
-                "n_predict": 32,
+                "n_predict": 16,
                 "stream": False,
                 "cache_prompt": False,
-                "stop": ["<end_of_turn>", "user", "model"] # 强制停止符
+                "stop": ["USER:", "ASSISTANT:", "\n"]
             }
             
             # 5. 发起请求

@@ -14,6 +14,7 @@ ai_engine/models/train/
 
 # Ignore compiled script generated on edge
 ai_engine/export_engine.py
+ai_engine/debug_gemma.jpg
 
 # Ignore dynamic configuration
 ai_engine/config/config.json
