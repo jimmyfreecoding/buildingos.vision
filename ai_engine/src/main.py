@@ -196,6 +196,10 @@ def init_tensorrt_models():
 
 # --- MQTT Setup ---
 MQTT_BROKER = config.get("mqtt", {}).get("broker", "127.0.0.1")
+# 如果在宿主机运行，且 broker 依然是容器名，则强制修正为 127.0.0.1
+if not is_in_container() and "buildingos-emqx-prod" in MQTT_BROKER:
+    MQTT_BROKER = "127.0.0.1"
+
 MQTT_PORT = config.get("mqtt", {}).get("port", 1883)
 MQTT_KEEPALIVE = 60
 

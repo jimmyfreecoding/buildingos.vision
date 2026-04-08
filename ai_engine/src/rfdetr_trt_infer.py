@@ -17,30 +17,40 @@ class RFDETRTensorRTEngine:
         try:
             import tensorrt as trt
             import pycuda.driver as cuda
-            import pycuda.autoinit  # noqa: F401
+            # 移除 autoinit，改用手动管理 Context 以支持多线程 (invalid resource handle 修复)
+            if not cuda.was_initialized():
+                cuda.init()
         except Exception as e:
             raise RuntimeError(f"RF-DETR TensorRT runtime dependencies missing: {e}")
 
         self.trt = trt
         self.cuda = cuda
         self.logger = trt.Logger(trt.Logger.WARNING)
+        
+        # 为当前进程/线程创建一个独立的设备上下文
+        self.device = cuda.Device(0)
+        self.cuda_context = self.device.make_context()
+        
+        try:
+            with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
+                self.engine = runtime.deserialize_cuda_engine(f.read())
+            if self.engine is None:
+                raise RuntimeError(f"Failed to deserialize engine: {engine_path}")
 
-        with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
-            self.engine = runtime.deserialize_cuda_engine(f.read())
-        if self.engine is None:
-            raise RuntimeError(f"Failed to deserialize engine: {engine_path}")
+            self.context = self.engine.create_execution_context()
+            if self.context is None:
+                raise RuntimeError("Failed to create TensorRT execution context")
 
-        self.context = self.engine.create_execution_context()
-        if self.context is None:
-            raise RuntimeError("Failed to create TensorRT execution context")
+            self.stream = cuda.Stream()
+            self.input_name = None
+            self.output_names = []
+            self.tensor_meta = {}
+            self.bindings = []
 
-        self.stream = cuda.Stream()
-        self.input_name = None
-        self.output_names = []
-        self.tensor_meta = {}
-        self.bindings = []
-
-        self._init_io()
+            self._init_io()
+        finally:
+            # 初始化完成后暂时 pop 掉，predict 时再 push
+            self.cuda_context.pop()
 
     def _init_io(self):
         trt = self.trt
@@ -184,7 +194,13 @@ class RFDETRTensorRTEngine:
     def predict(self, img):
         if img is None:
             return []
-        with trt_infer_lock:
-            x, scale, pad_x, pad_y, w, h = self._letterbox(img)
-            outputs = self._infer(x)
-            return self._parse_outputs(outputs, scale, pad_x, pad_y, w, h)
+        
+        # 关键：确保在推理线程中使用正确的 CUDA Context
+        self.cuda_context.push()
+        try:
+            with trt_infer_lock:
+                x, scale, pad_x, pad_y, w, h = self._letterbox(img)
+                outputs = self._infer(x)
+                return self._parse_outputs(outputs, scale, pad_x, pad_y, w, h)
+        finally:
+            self.cuda_context.pop()
