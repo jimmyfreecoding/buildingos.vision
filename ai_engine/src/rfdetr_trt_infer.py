@@ -104,7 +104,16 @@ class RFDETRTensorRTEngine:
         pad_y = (self.input_h - nh) // 2
         canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
         rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        
+        # 归一化到 0-1
         x = rgb.astype(np.float32) / 255.0
+        
+        # 针对 RF-DETR / RT-DETR 的标准 ImageNet 归一化 (Mean/Std)
+        # 很多 DETR 模型在导出时没有内置这个，需要在预处理做
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        x = (x - mean) / std
+        
         x = np.transpose(x, (2, 0, 1))[None, ...]
         return x, scale, pad_x, pad_y, w, h
 
@@ -159,11 +168,18 @@ class RFDETRTensorRTEngine:
         def sigmoid(x):
             return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
 
-        scores = sigmoid(logits_arr)
+        # 针对 RF-DETR 的分数解析优化：
+        # 如果模型输出已经是 0-1 之间（即导出的 ONNX 已含 Sigmoid），再次 Sigmoid 会显著降低分数。
+        # 我们可以通过检查最大值来启发式判断。
+        if np.max(logits_arr) > 1.0 or np.min(logits_arr) < 0.0:
+            scores = sigmoid(logits_arr)
+        else:
+            scores = logits_arr
+            
         person_scores = scores[:, self.person_class_id]
         
-        # 调试：打印前几个分数的最大值，帮助排查是否是激活函数问题
-        print(f"RF-DETR Inference: Max Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
+        # 调试：打印前几个分数的最大值，帮助排查
+        print(f"RF-DETR Inference: Raw Max={np.max(logits_arr):.4f}, Final Max={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
 
         # 复制一份以防修改原数组
         boxes = boxes_arr.copy().astype(np.float32)

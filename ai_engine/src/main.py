@@ -146,7 +146,7 @@ mqtt_cooldowns = {}    # MQTT 发送冷却时间戳 (去重键)
 # 全局模型占位符 (延迟加载)
 pose_model = None
 smoking_model = None
-presence_detector_source = "yolo26m-pose"
+presence_detector_source = "detector"
 
 # 确保 TensorRT 初始化的锁，防止多个摄像头线程同时触发初始化
 trt_init_lock = threading.Lock()
