@@ -95,9 +95,14 @@ class GemmaReviewQueue:
             # 2. 图像转 Base64
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             
-            # 3. 极简 Prompt，彻底杜绝复读。
-            # 对于某些 llama.cpp 版本，[img-1] 可能会引起复读，我们改用最原始的格式。
-            chat_prompt = f"USER: [img-1]图中是否有真实的、活着的人？请仅回答 YES 或 NO。\nASSISTANT:"
+            # 3. 切换为 Gemma 2 官方 Chat 模板，彻底杜绝复读。
+            # 格式: <start_of_turn>user\n[img-1]prompt<end_of_turn>\n<start_of_turn>model\n
+            chat_prompt = (
+                f"<start_of_turn>user\n"
+                f"[img-1]{prompt}\n"
+                f"Answer ONLY with 'YES' or 'NO'.<end_of_turn>\n"
+                f"<start_of_turn>model\n"
+            )
             
             # 4. 组装请求体
             payload = {
@@ -107,15 +112,21 @@ class GemmaReviewQueue:
                 "n_predict": 16,
                 "stream": False,
                 "cache_prompt": False,
-                "stop": ["USER:", "ASSISTANT:", "\n"]
+                "stop": ["<end_of_turn>", "user", "model"] # 移除 \n 停止词，防止首字符换行导致空响应
             }
             
             # 5. 发起请求
             resp = requests.post(self.gemma_url, json=payload, timeout=15.0)
             
             if resp.status_code == 200:
-                answer = resp.json().get("content", "").strip().upper()
+                data = resp.json()
+                answer = data.get("content", "").strip().upper()
                 print(f"DEBUG: Gemma raw response: '{answer}'")
+                
+                # 如果响应依然为空，尝试从 choices 结构中获取 (兼容不同版本的 llama.cpp server)
+                if not answer and "choices" in data:
+                    answer = data["choices"][0].get("text", "").strip().upper()
+                    print(f"DEBUG: Gemma fallback response: '{answer}'")
                 
                 # 严苛解析逻辑：必须是回答的开头包含关键词，且排除掉对指令的复读
                 # 如果回答太长且包含指令内容，则视为无效

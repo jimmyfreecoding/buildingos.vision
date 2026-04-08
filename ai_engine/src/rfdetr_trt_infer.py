@@ -169,20 +169,31 @@ class RFDETRTensorRTEngine:
             return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
 
         # 针对 RF-DETR 的分数解析优化：
-        # 调试：打印最高分数的索引，判断类别是否对齐
-        max_idx_overall = np.argmax(logits_arr)
-        col_idx = max_idx_overall % logits_arr.shape[1]
+        # 重要：在合并输出 [1, 300, 84] 中，前 4 列是 bbox 坐标 [cx, cy, w, h]
+        # 后面的才是类别分数。如果你之前看到 Class=82，说明没剥离坐标，索引 82 实际上是类别索引 78。
         
-        # 核心修复：如果模型输出已经是 0-1 之间，不再重复 Sigmoid
-        if np.max(logits_arr) > 1.0 or np.min(logits_arr) < 0.0:
-            scores = sigmoid(logits_arr)
+        # 核心修复：如果 logits_arr 包含坐标列 (列数 > 80)，则剥离前 4 列
+        real_logits = logits_arr
+        if logits_arr.shape[1] > 80:
+            real_logits = logits_arr[:, 4:]
+            
+        # 调试：查看剥离后的真实最高分
+        max_idx_overall = np.argmax(real_logits)
+        col_idx = max_idx_overall % real_logits.shape[1]
+        
+        # RT-DETR/RF-DETR 使用 Sigmoid 激活函数处理分类分数
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-np.clip(x, -15, 15)))
+            
+        if np.max(real_logits) > 1.0 or np.min(real_logits) < 0.0:
+            scores = sigmoid(real_logits)
         else:
-            scores = logits_arr
+            scores = real_logits
             
         person_scores = scores[:, self.person_class_id]
         
-        # 调试：打印前几个分数的最大值，帮助排查
-        print(f"RF-DETR Inference: Raw Max={np.max(logits_arr):.4f}, Final Person Score={np.max(person_scores):.4f}, Max Score Class={col_idx}, Threshold={self.conf_thres}")
+        # 调试：打印偏移后的真实分数
+        print(f"RF-DETR Inference: Global Max={np.max(scores):.4f} (at Class {col_idx}), Person Score={np.max(person_scores):.4f}, Threshold={self.conf_thres}")
 
         # 复制一份以防修改原数组
         boxes = boxes_arr.copy().astype(np.float32)
