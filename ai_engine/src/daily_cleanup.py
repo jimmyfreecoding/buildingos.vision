@@ -95,28 +95,55 @@ def update_json_references(area_path, to_webp=False):
     return updated_count
 
 def generate_gemma_summary(aggregated_data):
-    """调用 Gemma 生成深度日报总结，带详细错误日志"""
-    print("  📡 正在发起 Gemma API 请求...")
+    """调用 Gemma 生成深度日报总结，带数据瘦身逻辑"""
+    print("  📡 正在对数据进行瘦身并准备 Gemma 请求...")
+    
+    # --- 数据瘦身逻辑：确保不超出上下文限制 ---
+    compact_data = {
+        "date": aggregated_data["date"],
+        "overall": aggregated_data["summary_stats"],
+        "areas": {}
+    }
+    
+    for area_name, area_stats in aggregated_data["areas"].items():
+        # 只保留核心统计和精简后的时间线
+        compact_area = {
+            "stats": {
+                "total": area_stats["samples"],
+                "lvl1": area_stats["lvl1_count"],
+                "lvl2": area_stats["lvl2_count"],
+                "lvl2_yes": area_stats["lvl2_yes"],
+                "lvl2_no": area_stats["lvl2_no"]
+            },
+            "durations": {
+                "occupied_min": area_stats["timeline"]["total_occupied_min"],
+                "empty_min": area_stats["timeline"]["total_empty_min"]
+            },
+            # 时间段截断：只取前 15 个和后 15 个，防止 Token 爆炸
+            "timeline_sample": area_stats["timeline"]["segments"][:15] + (
+                [{"state": "...", "start": "...", "end": "..."}] if len(area_stats["timeline"]["segments"]) > 30 else []
+            ) + area_stats["timeline"]["segments"][-15:] if len(area_stats["timeline"]["segments"]) > 30 else area_stats["timeline"]["segments"]
+        }
+        compact_data["areas"][area_name] = compact_area
+
     prompt = f"""
-    以下是办公区一天的 AI 检测深度统计数据：
-    {json.dumps(aggregated_data, ensure_ascii=False, indent=2)}
+    以下是办公区一天的 AI 检测深度统计数据（已精简）：
+    {json.dumps(compact_data, ensure_ascii=False, indent=2)}
     
     请根据以上数据，生成一份每日办公区占用深度分析报告（使用 Markdown 格式）。
     要求必须包含以下内容：
     1. 判定效率分析：提到多少次是一级 Detector 直接确认，多少次触发了二级 Gemma 复核。
     2. 复核准确性：在二级复核中，Gemma 确认了多少次“有人”，否决（排除误报）了多少次。
-    3. 区域活跃度详情：
-       - 针对每个区域，列出其“有人”的具体时间段（例如：09:15 - 10:30）。
-       - 总结该区域的总“有人时间”和“无人时间”。
+    3. 区域活跃度详情：针对每个区域，列出其“有人”的具体时间段，并总结总“有人时间”和“无人时间”。
     4. 整体结论：办公区今天的活跃程度和安全状态总结。
     
-    注意：使用专业的 Markdown 标题、列表和加粗。语言专业、客观，不要输出思考过程，直接给出报告。
+    注意：使用 Markdown 格式。不要输出思考过程，直接给出报告。
     """
     
     payload = {
         "model": "buildingos_review_engine",
         "messages": [
-            {"role": "system", "content": "You are an AI data analyst. Summarize detection stats with focus on Level 1 vs Level 2 decision counts and detailed occupancy timelines for each area."},
+            {"role": "system", "content": "You are a professional AI data analyst. Summarize detection stats concisely."},
             {"role": "user", "content": prompt}
         ],
         "chat_template_kwargs": {"enable_thinking": False},
@@ -125,6 +152,9 @@ def generate_gemma_summary(aggregated_data):
     }
     
     try:
+        # 请求前清理一次内存
+        for i in range(4): requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=1.0)
+        
         start_time = time.time()
         resp = requests.post(GEMMA_URL, json=payload, timeout=120)
         duration = time.time() - start_time
@@ -133,20 +163,14 @@ def generate_gemma_summary(aggregated_data):
             data = resp.json()
             msg = data.get('choices', [{}])[0].get('message', {})
             content = msg.get('content', '').strip() or msg.get('reasoning_content', '').strip()
-            if not content:
-                print(f"  ⚠️ Gemma 返回内容为空。响应内容: {resp.text}")
-                return "Gemma 返回内容为空"
             print(f"  ✅ Gemma 总结生成成功 (耗时: {duration:.1f}s)")
             return content
         else:
-            error_msg = f"API 状态码异常: {resp.status_code}, 响应: {resp.text}"
-            print(f"  ❌ Gemma 请求失败: {error_msg}")
-            return f"Gemma 总结生成失败: {error_msg}"
+            print(f"  ❌ Gemma 请求失败 (HTTP {resp.status_code}): {resp.text}")
+            return f"Gemma 总结生成失败: API 返回 {resp.status_code}"
     except Exception as e:
-        import traceback
-        error_detail = traceback.format_exc()
-        print(f"  ❌ Gemma 请求发生异常:\n{error_detail}")
-        return f"Gemma 总结生成失败: {str(e)}"
+        print(f"  ❌ Gemma 请求异常: {e}")
+        return f"Gemma 总结生成失败: {e}"
 
 def calculate_time_segments(logs):
     """根据日志计算有人/无人的时间段和总时长"""
