@@ -90,30 +90,6 @@ class GemmaReviewQueue:
 
     def _call_gemma_api(self, jpg_bytes, prompt):
         """实际发起 HTTP 请求到本地 llama.cpp 部署的 Gemma 服务"""
-        # --- 调试增强：保存现场以供复现 ---
-        # 获取 debug 目录 (ai_engine/gemma_debug)
-        debug_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gemma_debug"))
-        if not os.path.exists(debug_dir):
-            try:
-                os.makedirs(debug_dir, exist_ok=True)
-            except:
-                debug_dir = "/tmp/gemma_debug"
-                if not os.path.exists(debug_dir):
-                    os.makedirs(debug_dir, exist_ok=True)
-        
-        # 使用毫秒级时间戳，防止极速请求时文件名冲突
-        timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time()*1000)%1000:03d}"
-        img_filename = f"gemma_{timestamp}.jpg"
-        img_path = os.path.join(debug_dir, img_filename)
-        sh_path = os.path.join(debug_dir, f"gemma_{timestamp}.sh")
-        
-        # 1. 保存原始图片
-        try:
-            with open(img_path, "wb") as f:
-                f.write(jpg_bytes)
-        except Exception as e:
-            print(f"⚠️ 无法保存调试图片: {e}")
-
         try:
             # 1. 强制在请求前物理清理 Slot 缓存，防止模型受上一帧干扰
             try:
@@ -125,137 +101,53 @@ class GemmaReviewQueue:
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             img_url = f"data:image/jpeg;base64,{img_b64}"
             
-            # 3. 构造 OpenAI 兼容的消息体
+            # 3. 构造 OpenAI 兼容的消息体 (同步验证成功的逻辑)
             messages = [
+                {
+                    "role": "system",
+                    "content": "You are a direct image classifier. Answer ONLY 'YES' or 'NO'. DO NOT explain. DO NOT think out loud."
+                },
                 {
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": img_url}},
-                        {"type": "text", "text": f"{prompt}\nConstraint: Answer ONLY 'YES' or 'NO'. No reasoning. No explanations."}
+                        {"type": "text", "text": f"Is there any person in this image? YES or NO."}
                     ]
                 }
             ]
             
-            # 4. 组装请求体 (使用 v1/chat/completions 接口)
+            # 4. 组装请求体 (同步验证成功的逻辑)
             payload = {
                 "model": "buildingos_review_engine",
                 "messages": messages,
+                "chat_template_kwargs": {
+                    "enable_thinking": False  # 禁用思维链，逼迫模型直接输出结果
+                },
                 "temperature": 0.0,
                 "max_tokens": 16,
                 "stream": False,
-                "stop": ["<end_of_turn>", "<eos>", "model\n"]
+                "stop": ["<end_of_turn>", "<eos>"]
             }
             
-            # --- 调试增强：生成并保存复测脚本 ---
-            import json
-            # 构造用于脚本的 Payload (不带巨大的 Base64)
-            payload_for_sh = payload.copy()
-            payload_for_sh["messages"] = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": "IMAGE_URL_PLACEHOLDER"}},
-                        {"type": "text", "text": payload["messages"][0]["content"][1]["text"]}
-                    ]
-                }
-            ]
-            
-            payload_json_safe = json.dumps(payload_for_sh, ensure_ascii=False).replace("'", "'\\''")
-            
-            sh_content = f"""#!/bin/bash
-# Gemma 复核手动复现脚本 (由 AI-Engine 自动生成 - OpenAI 协议版)
-# 时间: {timestamp}
-# 提示词: {prompt}
-
-# 获取当前脚本所在目录
-DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
-IMG_FILE="$DIR/{img_filename}"
-GEMMA_URL="{self.gemma_url}"
-
-echo "🚀 正在使用本地图片重新发起 Gemma 复核 (OpenAI 协议)..."
-echo "📸 图片: $IMG_FILE"
-echo "❓ 提示词: {prompt}"
-
-# 使用 heredoc 传递 Python 代码，彻底避免 shell 参数过长限制
-python3 - << 'EOF' "$IMG_FILE" '{payload_json_safe}' "$GEMMA_URL"
-import sys, json, requests, base64
-
-img_path = sys.argv[1]
-payload = json.loads(sys.argv[2])
-gemma_url = sys.argv[3]
-
-try:
-    with open(img_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode('utf-8')
-    # 注入 OpenAI 格式的图片 URL
-    payload['messages'][0]['content'][0]['image_url']['url'] = f"data:image/jpeg;base64,{{img_b64}}"
-except Exception as e:
-    print(f"❌ 无法读取图片文件: {{e}}")
-    sys.exit(1)
-
-try:
-    print(f"\\n📡 正在请求 Gemma API: {{gemma_url}} ...")
-    resp = requests.post(gemma_url, json=payload, timeout=20.0)
-    print(f'\\n[Response Status] {{resp.status_code}}')
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        content = data.get("choices", [{{}}])[0].get("message", {{}}).get("content", "")
-        print(f'[Response Content] "{{content}}"')
-    else:
-        print(f'[Response Body] {{resp.text}}')
-except Exception as e:
-    print(f'\\n[Error] {{e}}')
-EOF
-"""
-            try:
-                with open(sh_path, "w", encoding="utf-8") as f:
-                    f.write(sh_content)
-                try:
-                    os.chmod(sh_path, 0o755)
-                except:
-                    pass
-            except Exception as e:
-                print(f"⚠️ 无法保存调试脚本: {e}")
-            # -----------------------------------
-
             # 5. 发起请求
             resp = requests.post(self.gemma_url, json=payload, timeout=15.0)
             
             if resp.status_code == 200:
                 data = resp.json()
-                # OpenAI 协议返回在 choices[0].message.content
-                raw_answer = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
+                msg = data.get('choices', [{}])[0].get('message', {})
+                content = msg.get('content', '').strip().upper()
+                reasoning = msg.get('reasoning_content', '').strip().upper()
                 
-                # 兼容性兜底：有些 llama-server 版本可能还在 content 里直接返回
-                if not raw_answer:
-                    raw_answer = data.get("content", "").strip().upper()
+                # 综合判定：同时看 content 和 reasoning_content
+                final_text = content + " " + reasoning
+                print(f"DEBUG: Gemma Response (Combined): '{final_text.strip()}'")
                 
-                print(f"DEBUG: Gemma raw response: '{raw_answer}'")
-                
-                # --- 强力清洗逻辑 ---
-                # 即使模型复读了指令或包含了 Prompt 片段，我们也只看最后的有效输出
-                cleaned = raw_answer
-                for stop_word in ["ANSWER:", "MODEL\n", "[IMG-1]", "INSTRUCTION", "YES OR NO"]:
-                    if stop_word in cleaned:
-                        cleaned = cleaned.split(stop_word)[-1].strip()
-                
-                # 去除前缀标点
-                cleaned = cleaned.lstrip(":： ").strip()
-                
-                print(f"DEBUG: Gemma cleaned response: '{cleaned}' (Timestamp: {timestamp})")
-                print(f"DEBUG: 现场已保存至: {img_path}")
-                print(f"DEBUG: 手动复测脚本: {sh_path}")
-                
-                # 最终决策：寻找关键词
-                if "YES" in cleaned or "是的" in cleaned or "确认" in cleaned:
+                # 判定逻辑：寻找关键词
+                if "YES" in final_text:
                     return "YES"
-                elif "NO" in cleaned or "无人" in cleaned or "没有" in cleaned:
+                elif "NO" in final_text:
                     return "NO"
                 else:
-                    # 最后的兜底：如果在整个 raw_answer 中能找到 YES/NO 也行
-                    if "YES" in raw_answer: return "YES"
-                    if "NO" in raw_answer: return "NO"
                     return "NO" # 默认保守处理
             else:
                 print(f"❌ Gemma API 状态码异常: {resp.status_code}")
