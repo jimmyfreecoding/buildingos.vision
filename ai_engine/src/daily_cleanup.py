@@ -94,77 +94,57 @@ def update_json_references(area_path, to_webp=False):
                 pass
     return updated_count
 
-def generate_gemma_summary(aggregated_data):
-    """调用 Gemma 生成深度日报总结，带数据瘦身逻辑"""
-    print("  📡 正在对数据进行瘦身并准备 Gemma 请求...")
+def generate_gemma_summary(summary_text_base):
+    """调用 Gemma 生成深度日报总结，仅传递预处理后的文本摘要"""
     
-    # --- 数据瘦身逻辑：确保不超出上下文限制 ---
-    compact_data = {
-        "date": aggregated_data["date"],
-        "overall": aggregated_data["summary_stats"],
-        "areas": {}
-    }
-    
-    for area_name, area_stats in aggregated_data["areas"].items():
-        # 只保留核心统计和精简后的时间线
-        compact_area = {
-            "stats": {
-                "total": area_stats["samples"],
-                "lvl1": area_stats["lvl1_count"],
-                "lvl2": area_stats["lvl2_count"],
-                "lvl2_yes": area_stats["lvl2_yes"],
-                "lvl2_no": area_stats["lvl2_no"]
-            },
-            "durations": {
-                "occupied_min": area_stats["timeline"]["total_occupied_min"],
-                "empty_min": area_stats["timeline"]["total_empty_min"]
-            },
-            # 时间段截断：只取前 15 个和后 15 个，防止 Token 爆炸
-            "timeline_sample": area_stats["timeline"]["segments"][:15] + (
-                [{"state": "...", "start": "...", "end": "..."}] if len(area_stats["timeline"]["segments"]) > 30 else []
-            ) + area_stats["timeline"]["segments"][-15:] if len(area_stats["timeline"]["segments"]) > 30 else area_stats["timeline"]["segments"]
-        }
-        compact_data["areas"][area_name] = compact_area
+    print(f"  📡 正在准备总结请求 (摘要长度: {len(summary_text_base)} 字符)...")
 
     prompt = f"""
-    以下是办公区一天的 AI 检测深度统计数据（已精简）：
-    {json.dumps(compact_data, ensure_ascii=False, indent=2)}
+    请根据以下办公区 AI 检测数据的汇总摘要，生成一份专业、详细且排版精美的每日深度分析报告：
     
-    请根据以上数据，生成一份每日办公区占用深度分析报告（使用 Markdown 格式）。
-    要求必须包含以下内容：
-    1. 判定效率分析：提到多少次是一级 Detector 直接确认，多少次触发了二级 Gemma 复核。
-    2. 复核准确性：在二级复核中，Gemma 确认了多少次“有人”，否决（排除误报）了多少次。
-    3. 区域活跃度详情：针对每个区域，列出其“有人”的具体时间段，并总结总“有人时间”和“无人时间”。
-    4. 整体结论：办公区今天的活跃程度和安全状态总结。
+    【数据汇总摘要】：
+    {summary_text_base}
     
-    注意：使用 Markdown 格式。不要输出思考过程，直接给出报告。
+    要求：
+    1. 必须使用标准 Markdown 格式。
+    2. 包含一个总括性的二级标题 (##)。
+    3. 针对每个区域，使用三级标题 (###)，并详细润色其“有人/无人”时间段、总时长及检测准确率（一级直认 vs 二级复核）。
+    4. 报告应包含对异常点（如频繁切换状态、高频复核区域）的简要推测或建议。
+    5. 语言应专业且具有洞察力，直接输出 Markdown 报告内容。
     """
     
     payload = {
         "model": "buildingos_review_engine",
         "messages": [
-            {"role": "system", "content": "You are a professional AI data analyst. Summarize detection stats concisely."},
+            {"role": "system", "content": "You are a professional administrative data analyst. Your task is to transform raw statistical summaries into insightful, well-structured Markdown reports for office management."},
             {"role": "user", "content": prompt}
         ],
-        "chat_template_kwargs": {"enable_thinking": False},
-        "temperature": 0.4,
-        "max_tokens": 1500
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "stream": False
     }
     
     try:
-        # 请求前清理一次内存
-        for i in range(4): requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=1.0)
+        # 预清理内存
+        for i in range(8): requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=0.5)
         
         start_time = time.time()
-        resp = requests.post(GEMMA_URL, json=payload, timeout=120)
+        resp = requests.post(GEMMA_URL, json=payload, timeout=90)
         duration = time.time() - start_time
         
         if resp.status_code == 200:
             data = resp.json()
             msg = data.get('choices', [{}])[0].get('message', {})
-            content = msg.get('content', '').strip() or msg.get('reasoning_content', '').strip()
-            print(f"  ✅ Gemma 总结生成成功 (耗时: {duration:.1f}s)")
-            return content
+            content = msg.get('content', '').strip()
+            reasoning = msg.get('reasoning_content', '').strip()
+            
+            # 合并逻辑：优先取正文，如果正文太短则取思维链
+            final_report = content if len(content) > 100 else reasoning
+            if not final_report:
+                final_report = content or reasoning or "报告内容生成为空"
+                
+            print(f"  ✅ Gemma 总结生成成功 (耗时: {duration:.1f}s, 报告长度: {len(final_report)} 字符)")
+            return final_report
         else:
             print(f"  ❌ Gemma 请求失败 (HTTP {resp.status_code}): {resp.text}")
             return f"Gemma 总结生成失败: API 返回 {resp.status_code}"
@@ -346,12 +326,41 @@ def process_day(target_date, only_summary=False):
         del area_logs_for_timeline
         gc.collect()
 
-    # 6. 生成报告
+    # 6. 构造文本摘要用于大模型生成报告
+    summary_lines = [
+        f"日期: {target_date}",
+        f"全天总样本数: {aggregated_data['summary_stats']['total_samples']}",
+        f"一级 Detector 直认次数: {aggregated_data['summary_stats']['lvl1_direct_confirm']}",
+        f"二级 Gemma 复核总数: {aggregated_data['summary_stats']['lvl2_gemma_reviews']} (确认: {aggregated_data['summary_stats']['lvl2_gemma_confirmed']}, 否决: {aggregated_data['summary_stats']['lvl2_gemma_denied']})",
+        ""
+    ]
+    
+    for area_name, area_stats in aggregated_data["areas"].items():
+        summary_lines.append(f"【区域: {area_name}】")
+        summary_lines.append(f"- 样本总数: {area_stats['samples']}")
+        summary_lines.append(f"- 判定分布: 一级确认 {area_stats['lvl1_count']} 次, 二级复核 {area_stats['lvl2_count']} 次 (复核通过 {area_stats['lvl2_yes']} / 拒绝 {area_stats['lvl2_no']})")
+        summary_lines.append(f"- 时间统计: 有人总时长 {area_stats['timeline']['total_occupied_min']} 分钟, 无人总时长 {area_stats['timeline']['total_empty_min']} 分钟")
+        
+        # 只取有人时间段
+        occupied_segments = [s for s in area_stats["timeline"]["segments"] if s["state"] == "Occupied"]
+        if occupied_segments:
+            summary_lines.append("- 有人时段详情:")
+            for s in occupied_segments[:20]: # 限制段数，防止超长
+                summary_lines.append(f"  * {s['start']} - {s['end']} (时长: {s['duration_min']} 分)")
+            if len(occupied_segments) > 20:
+                summary_lines.append(f"  * ... (共 {len(occupied_segments)} 个时段)")
+        else:
+            summary_lines.append("- 该区域今日全天无人。")
+        summary_lines.append("")
+
+    summary_text_base = "\n".join(summary_lines)
+
+    # 7. 生成报告
     print("  🧠 正在生成 Gemma 增强深度分析报告...")
-    summary_text = generate_gemma_summary(aggregated_data)
+    summary_text = generate_gemma_summary(summary_text_base)
     
     report = {
-        "version": "3.2",
+        "version": "3.3",
         "generated_at": datetime.now().isoformat(),
         "stats": aggregated_data,
         "summary": summary_text
@@ -362,15 +371,15 @@ def process_day(target_date, only_summary=False):
     
     print(f"✅ 处理完成！报告已保存至: {os.path.join(day_dir, 'daily_summary.json')}")
 
-    # 7. 强力释放 Gemma 内存
+    # 8. 强力释放 Gemma 内存
     try:
         print("  🧹 正在强力释放 Gemma 插槽内存 (Slots 0-7)...")
         for i in range(8): # 扩大清理范围
-            requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=2.0)
+            requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=1.0)
     except:
         pass
     
-    # 8. 脚本最终垃圾回收
+    # 9. 脚本最终垃圾回收
     del aggregated_data
     gc.collect()
 
