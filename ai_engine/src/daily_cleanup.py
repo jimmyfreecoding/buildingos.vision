@@ -120,7 +120,7 @@ def generate_gemma_summary(summary_text_base):
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "stream": False
     }
     
@@ -224,7 +224,7 @@ def calculate_time_segments(logs):
         "total_empty_min": round(total_empty_sec / 60, 1)
     }
 
-def process_day(target_date, only_summary=False):
+def process_day(target_date, only_summary=False, should_reboot=False):
     """处理指定日期的所有日志"""
     day_dir = os.path.join(LOG_DIR_BASE, target_date)
     if not os.path.exists(day_dir):
@@ -383,10 +383,20 @@ def process_day(target_date, only_summary=False):
     del aggregated_data
     gc.collect()
 
+    # 10. 重启逻辑
+    if should_reboot:
+        print("🚀 [CRITICAL] 任务全部完成，正在准备系统重启...")
+        time.sleep(5)
+        os.system("sudo reboot")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BuildingOS Vision 每日数据清理与总结脚本")
-    parser.add_argument("date", nargs="?", default=datetime.now().strftime("%Y-%m-%d"), help="目标日期 (YYYY-MM-DD)")
+    
+    # 默认日期改为昨天
+    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    parser.add_argument("date", nargs="?", default=yesterday_str, help="目标日期 (YYYY-MM-DD)，默认为昨天")
     parser.add_argument("--only-summary", action="store_true", help="仅生成总结报告，跳过图片压缩")
+    parser.add_argument("--reboot", action="store_true", help="处理完成后执行 sudo reboot")
     
     args = parser.parse_args()
-    process_day(args.date, only_summary=args.only_summary)
+    process_day(args.date, only_summary=args.only_summary, should_reboot=args.reboot)
