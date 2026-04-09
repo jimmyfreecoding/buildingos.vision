@@ -179,8 +179,6 @@
     "promptRequired": "Prompt cannot be empty",
     "requestFailed": "Inference request failed"
   },
-    "requestFailed": "Inference request failed"
-  },
   "logs": {
     "heatmapTitle": "Occupancy Heatmap",
     "testButton": "Inference Test",
