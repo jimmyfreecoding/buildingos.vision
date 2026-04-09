@@ -127,7 +127,7 @@
                 <div v-if="gemmaDetails.slots && gemmaDetails.slots.length > 0">
                   <div v-for="slot in gemmaDetails.slots" :key="slot.id" style="margin-bottom: 5px;">
                     <el-tag size="small" :type="slot.state === 0 ? 'info' : 'primary'">
-                      Slot {{ slot.id }}: {{ slot.state === 0 ? 'Idle (空闲)' : 'Processing (推理中...)' }}
+                      Slot {{ slot.id }}: {{ slot.state === 0 ? 'Idle (空闲)' : 'Running (运行中)' }}
                     </el-tag>
                     <span v-if="slot.state !== 0" style="margin-left: 10px; font-size: 12px; color: #606266;">
                       Prompt: {{ slot.n_prompt_tokens }} | Decoded: {{ slot.n_decoded_tokens }}

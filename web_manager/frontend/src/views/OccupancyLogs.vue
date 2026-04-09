@@ -171,7 +171,7 @@
           v-for="group in groupedLogs"
           :key="group.time"
           :timestamp="group.time"
-          type="primary"
+          :type="group.logs.some(l => l.raw_payload?.result === 'occupied') ? 'success' : 'info'"
         >
           <el-card shadow="hover" class="log-detail-card">
             <div class="log-header">
@@ -182,7 +182,7 @@
             </div>
             
             <div class="log-meta" style="margin-top: 10px; font-size: 13px; color: #606266;">
-              <p><strong>策略链路:</strong> yolo26m+gemma</p>
+              <p><strong>策略链路:</strong> Object detection+Gemma</p>
               <p style="margin-top: 5px;">
                 <strong>最终裁决:</strong> 
                 <el-popover placement="bottom" title="1-minute sample 裁决过程" width="400" trigger="click">
@@ -194,7 +194,7 @@
                       <b><el-icon><VideoCamera /></el-icon> {{ log.camera_id }}:</b> 
                       <span v-if="log.raw_payload?.result === 'occupied'" style="color: #67C23A; margin-left: 5px;">判定有人</span>
                       <span v-else style="color: #909399; margin-left: 5px;">判定无人</span>
-                      <span style="margin-left: 5px; color: #E6A23C;" v-if="log.raw_payload?.yolo_count > 0">(YOLO检测到 {{ log.raw_payload?.yolo_count }} 人)</span>
+                      <span style="margin-left: 5px; color: #E6A23C;" v-if="log.raw_payload?.yolo_count > 0">(检测到 {{ log.raw_payload?.yolo_count }} 人)</span>
                     </p>
                     <el-divider style="margin: 10px 0;"></el-divider>
                     <p><b>场景综合结果:</b> 
@@ -230,7 +230,7 @@
                     <b style="color: #303133;">判断证据链:</b>
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
                       <li v-for="(step, idx) in (log.raw_payload?.decision_chain || ['直接采信无日志'])" :key="idx" style="margin-bottom: 3px;">
-                        <span v-if="step.includes('Detector漏报')">
+                        <span v-if="step.includes('Gemma')">
                           {{ step }}
                           <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
                             [手动复测]
@@ -826,6 +826,7 @@ onMounted(() => {
 .heatmap-container {
   display: flex;
   align-items: flex-start;
+  width: 100%;
 }
 .y-axis {
   display: flex;
@@ -845,19 +846,23 @@ onMounted(() => {
 .grid-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 .grid-columns {
   display: flex;
   gap: 4px;
+  justify-content: space-between;
 }
 .column {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
 }
 .cell {
-  width: 15px;
-  height: 15px;
+  width: 100%;
+  padding-bottom: 100%; /* Keep it square */
+  height: 0;
   border-radius: 3px;
   cursor: pointer;
   transition: transform 0.1s, box-shadow 0.1s;
