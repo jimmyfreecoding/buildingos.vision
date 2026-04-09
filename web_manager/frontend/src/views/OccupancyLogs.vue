@@ -64,7 +64,19 @@
       <el-row :gutter="40" v-else>
         <el-col :span="12" v-for="dayData in displayDays" :key="dayData.date" style="margin-bottom: 40px;">
           <div class="day-heatmap">
-            <h4 class="day-title">{{ dayData.date }}</h4>
+            <div class="day-header">
+              <h4 class="day-title">{{ dayData.date }}</h4>
+              <el-button 
+                v-if="summaries[dayData.date]" 
+                type="primary" 
+                link 
+                size="small" 
+                class="summary-link"
+                @click="openSummary(dayData.date)"
+              >
+                <el-icon><Document /></el-icon> 查看 AI 日报总结
+              </el-button>
+            </div>
             <div class="heatmap-container">
               <!-- Y-axis (Minutes): 50m at top, 0m at bottom -->
               <div class="y-axis">
@@ -100,6 +112,54 @@
         </el-col>
       </el-row>
     </div>
+
+    <!-- AI 日报总结弹窗 -->
+    <el-dialog v-model="summaryDialogVisible" :title="`AI 日报总结 - ${selectedDate}`" width="700px">
+      <div v-if="selectedSummary" class="summary-content">
+        <el-descriptions :column="1" border size="small" class="summary-stats">
+          <el-descriptions-item label="生成时间">
+            {{ formatTime(selectedSummary.generated_at) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="检测概览">
+            <el-tag size="small">总样本: {{ selectedSummary.stats.summary_stats.total_samples }}</el-tag>
+            <el-tag size="small" type="success" style="margin-left: 5px;">一级直认: {{ selectedSummary.stats.summary_stats.lvl1_direct_confirm }}</el-tag>
+            <el-tag size="small" type="warning" style="margin-left: 5px;">二级复核: {{ selectedSummary.stats.summary_stats.lvl2_gemma_reviews }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="复核结果">
+            <span style="color: #67C23A">有人确认: {{ selectedSummary.stats.summary_stats.lvl2_gemma_confirmed }}</span>
+            <span style="color: #F56C6C; margin-left: 15px;">误报排除: {{ selectedSummary.stats.summary_stats.lvl2_gemma_denied }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div class="summary-text-box">
+          <div class="summary-label">Gemma 深度分析报告：</div>
+          <div class="summary-text">{{ selectedSummary.summary }}</div>
+        </div>
+
+        <div v-if="selectedSummary.stats.areas[selectedArea]?.lvl2_details?.length > 0" class="summary-details">
+          <div class="summary-label">二级复核时间轴 ({{ selectedArea }})：</div>
+          <el-table :data="selectedSummary.stats.areas[selectedArea].lvl2_details" size="small" border stripe style="margin-top: 10px;">
+            <el-table-column prop="time" label="时间" width="180">
+              <template #default="scope">
+                {{ formatTime(scope.row.time) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="res" label="复核结果" width="100">
+              <template #default="scope">
+                <el-tag :type="scope.row.res === 'YES' ? 'success' : 'danger'" size="small">
+                  {{ scope.row.res === 'YES' ? '有人' : '无人' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="决策链详情">
+              <template #default="scope">
+                <span style="font-size: 11px; color: #909399;">{{ scope.row.reason.join(' → ') }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 详情弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1000px" top="5vh">
@@ -266,7 +326,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { Calendar, VideoCamera, Plus, Picture, Search } from '@element-plus/icons-vue'
+import { Calendar, VideoCamera, Plus, Picture, Search, Document } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const allLogs = ref([])
@@ -278,6 +338,28 @@ let refreshInterval = null
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const dialogLogs = ref([])
+
+// --- Summary State ---
+const summaryDialogVisible = ref(false)
+const summaries = ref({})
+const selectedDate = ref('')
+const selectedSummary = ref(null)
+
+const openSummary = (date) => {
+  selectedDate.value = date
+  selectedSummary.value = summaries.value[date]
+  summaryDialogVisible.value = true
+}
+
+const fetchSummary = async (date) => {
+  try {
+    const res = await axios.get(`/api/occupancy/summary/${date}`)
+    summaries.value[date] = res.data
+  } catch (e) {
+    // If not found, ignore
+  }
+}
+// ----------------------
 
 // --- Test Image State ---
 const dialogTestVisible = ref(false)
@@ -363,6 +445,11 @@ const fetchLogs = async (silent = false) => {
     if (!selectedArea.value && uniqueAreas.value.length > 0) {
       selectedArea.value = uniqueAreas.value[0]
     }
+
+    // Fetch summaries for the last 8 days
+    defaultDates.forEach(date => {
+      fetchSummary(date)
+    })
   } catch (e) {
     if (!silent) ElMessage.error('获取日志失败')
   }
@@ -601,11 +688,49 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
 }
+.day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-left: 45px;
+}
 .day-title {
-  margin: 0 0 10px 45px;
+  margin: 0;
   font-size: 14px;
   color: #303133;
-  font-weight: 500;
+  font-weight: bold;
+}
+.summary-link {
+  font-size: 12px;
+}
+.summary-content {
+  padding: 10px;
+}
+.summary-stats {
+  margin-bottom: 20px;
+}
+.summary-text-box {
+  background: #f4f4f5;
+  padding: 15px;
+  border-radius: 4px;
+  border-left: 4px solid #909399;
+  margin-bottom: 20px;
+}
+.summary-label {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #303133;
+  font-size: 14px;
+}
+.summary-text {
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.summary-details {
+  margin-top: 20px;
 }
 .heatmap-container {
   display: flex;

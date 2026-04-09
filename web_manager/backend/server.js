@@ -320,6 +320,22 @@ app.post('/api/network', (req, res) => {
 });
 
 // --- 5. Occupancy Logs API ---
+app.get('/api/occupancy/summary/:date', (req, res) => {
+    const { date } = req.params;
+    const summaryPath = path.join('/app/www/occupancy_logs', date, 'daily_summary.json');
+    
+    try {
+        if (fs.existsSync(summaryPath)) {
+            const data = fs.readFileSync(summaryPath, 'utf8');
+            res.json(JSON.parse(data));
+        } else {
+            res.status(404).json({ error: 'Summary not found' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/occupancy/logs', (req, res) => {
     const logsDir = '/app/www/occupancy_logs';
     try {
