@@ -6,6 +6,8 @@ import cv2
 import base64
 import requests
 import time
+import argparse
+import gc
 from datetime import datetime, timedelta
 
 # --- 路径自适应 ---
@@ -14,7 +16,6 @@ def get_real_path(p):
         return p
     
     # 宿主机环境下，尝试找到项目根目录
-    # 假设脚本在 ai_engine/src 下
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
     
@@ -37,12 +38,11 @@ GEMMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
 GEMMA_SLOTS_URL = "http://127.0.0.1:8080/slots/0"
 
 def convert_to_webp(img_path, max_width=800, quality=50):
-    """转换为 WebP 格式并压缩 (增加安全检查和重复压缩检查)"""
+    """转换为 WebP 格式并压缩 (50% 质量，支持 JPG -> WebP)"""
     try:
-        # 只处理 .jpg，如果是 .webp 说明已经处理过了
         if not img_path.lower().endswith(".jpg"): return False
 
-        # 1. 检查文件是否处于“稳定”状态 (最后修改时间在 5 分钟前)
+        # 1. 检查文件是否稳定 (5 分钟前)
         file_mtime = os.path.getmtime(img_path)
         if time.time() - file_mtime < 300: 
             return False
@@ -51,7 +51,6 @@ def convert_to_webp(img_path, max_width=800, quality=50):
         if img is None: return False
         
         h, w = img.shape[:2]
-        # 2. 如果宽度已经小于等于目标宽度，且已经是 webp (虽然逻辑上 jpg 不会进这里)，则不缩放
         if w > max_width:
             new_h = int(h * (max_width / w))
             img = cv2.resize(img, (max_width, new_h), interpolation=cv2.INTER_AREA)
@@ -59,23 +58,25 @@ def convert_to_webp(img_path, max_width=800, quality=50):
         # 转换为 WebP
         webp_path = os.path.splitext(img_path)[0] + ".webp"
         
-        # 检查 webp 是否已存在且较新
-        if os.path.exists(webp_path):
-            os.remove(img_path) # 如果 webp 已经存在了，直接删除旧 jpg 即可
-            return True
-
-        cv2.imwrite(webp_path, img, [int(cv2.IMWRITE_WEBP_QUALITY), quality])
+        # 写入 WebP
+        success = cv2.imwrite(webp_path, img, [int(cv2.IMWRITE_WEBP_QUALITY), quality])
         
-        if os.path.exists(webp_path):
+        # 释放 OpenCV 图像对象
+        del img
+        
+        if success and os.path.exists(webp_path):
             os.remove(img_path)
             return True
         return False
     except Exception as e:
         return False
 
-def update_json_references(area_path):
-    """更新 JSON 文件中的图片后缀，并防止重复修改"""
+def update_json_references(area_path, to_webp=False):
+    """更新 JSON 文件中的图片后缀，支持 jpg <-> webp 互转"""
     updated_count = 0
+    from_ext = ".webp" if not to_webp else ".jpg"
+    target_ext = ".jpg" if not to_webp else ".webp"
+    
     for f in os.listdir(area_path):
         if f.endswith(".json") and f != "daily_summary.json":
             json_path = os.path.join(area_path, f)
@@ -83,9 +84,9 @@ def update_json_references(area_path):
                 with open(json_path, 'r', encoding='utf-8') as jf:
                     data = json.load(jf)
                 
-                # 检查是否包含 .jpg 引用
-                if "images" in data and any(".jpg" in img for img in data["images"]):
-                    data["images"] = [img.replace(".jpg", ".webp") for img in data["images"]]
+                # 检查是否包含需要替换的引用
+                if "images" in data and any(from_ext in img for img in data["images"]):
+                    data["images"] = [img.replace(from_ext, target_ext) for img in data["images"]]
                     with open(json_path, 'w', encoding='utf-8') as jf:
                         json.dump(data, jf, ensure_ascii=False, indent=2)
                     updated_count += 1
@@ -94,7 +95,8 @@ def update_json_references(area_path):
     return updated_count
 
 def generate_gemma_summary(aggregated_data):
-    """调用 Gemma 生成深度日报总结"""
+    """调用 Gemma 生成深度日报总结，带详细错误日志"""
+    print("  📡 正在发起 Gemma API 请求...")
     prompt = f"""
     以下是办公区一天的 AI 检测深度统计数据：
     {json.dumps(aggregated_data, ensure_ascii=False, indent=2)}
@@ -118,19 +120,33 @@ def generate_gemma_summary(aggregated_data):
             {"role": "user", "content": prompt}
         ],
         "chat_template_kwargs": {"enable_thinking": False},
-        "temperature": 0.4, # 降低随机性
-        "max_tokens": 1500 # 增加长度以容纳时间段
+        "temperature": 0.4,
+        "max_tokens": 1500
     }
     
     try:
-        resp = requests.post(GEMMA_URL, json=payload, timeout=90)
+        start_time = time.time()
+        resp = requests.post(GEMMA_URL, json=payload, timeout=120)
+        duration = time.time() - start_time
+        
         if resp.status_code == 200:
             data = resp.json()
             msg = data.get('choices', [{}])[0].get('message', {})
-            return msg.get('content', '').strip() or msg.get('reasoning_content', '').strip()
-        return "Gemma 总结生成失败"
+            content = msg.get('content', '').strip() or msg.get('reasoning_content', '').strip()
+            if not content:
+                print(f"  ⚠️ Gemma 返回内容为空。响应内容: {resp.text}")
+                return "Gemma 返回内容为空"
+            print(f"  ✅ Gemma 总结生成成功 (耗时: {duration:.1f}s)")
+            return content
+        else:
+            error_msg = f"API 状态码异常: {resp.status_code}, 响应: {resp.text}"
+            print(f"  ❌ Gemma 请求失败: {error_msg}")
+            return f"Gemma 总结生成失败: {error_msg}"
     except Exception as e:
-        return f"Gemma 总结生成失败: {e}"
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"  ❌ Gemma 请求发生异常:\n{error_detail}")
+        return f"Gemma 总结生成失败: {str(e)}"
 
 def calculate_time_segments(logs):
     """根据日志计算有人/无人的时间段和总时长"""
@@ -204,14 +220,15 @@ def calculate_time_segments(logs):
         "total_empty_min": round(total_empty_sec / 60, 1)
     }
 
-def process_day(target_date):
+def process_day(target_date, only_summary=False):
     """处理指定日期的所有日志"""
     day_dir = os.path.join(LOG_DIR_BASE, target_date)
     if not os.path.exists(day_dir):
         print(f"❌ 目录不存在: {day_dir}")
         return
 
-    print(f"📅 开始处理日期: {target_date} (WebP 50% 质量 + 增强深度统计)")
+    mode_str = "仅总结模式" if only_summary else "压缩+总结模式"
+    print(f"📅 开始处理日期: {target_date} ({mode_str} / WebP 50% 质量)")
     
     aggregated_data = {
         "date": target_date,
@@ -226,7 +243,7 @@ def process_day(target_date):
     }
 
     # 1. 遍历区域目录
-    for area_name in os.listdir(day_dir):
+    for area_name in sorted(os.listdir(day_dir)):
         area_path = os.path.join(day_dir, area_name)
         if not os.path.isdir(area_path): continue
         
@@ -239,68 +256,78 @@ def process_day(target_date):
             "lvl2_yes": 0,
             "lvl2_no": 0,
             "lvl2_details": [],
-            "timeline": {} # 存放时间段统计
+            "timeline": {} 
         }
         
-        # 2. 转换图片
-        files = os.listdir(area_path)
-        for f in files:
-            if f.endswith(".jpg"):
-                convert_to_webp(os.path.join(area_path, f))
-        
-        # 3. 更新 JSON 引用
-        update_json_references(area_path)
+        # 2. 如果不是仅总结模式，则转换为 WebP
+        if not only_summary:
+            files = os.listdir(area_path)
+            convert_count = 0
+            for f in files:
+                if f.lower().endswith(".jpg"):
+                    if convert_to_webp(os.path.join(area_path, f)):
+                        convert_count += 1
+            
+            # 3. 更新 JSON 引用为 .webp
+            if convert_count > 0:
+                update_json_references(area_path, to_webp=True)
         
         # 4. 深度解析 JSON
-        for f in os.listdir(area_path):
-            if f.endswith(".json") and f != "daily_summary.json":
-                try:
-                    with open(os.path.join(area_path, f), 'r', encoding='utf-8') as jf:
-                        log = json.load(jf)
-                        area_stats["samples"] += 1
-                        aggregated_data["summary_stats"]["total_samples"] += 1
+        json_files = [f for f in os.listdir(area_path) if f.endswith(".json") and f != "daily_summary.json"]
+        for f in json_files:
+            try:
+                with open(os.path.join(area_path, f), 'r', encoding='utf-8') as jf:
+                    log = json.load(jf)
+                    area_stats["samples"] += 1
+                    aggregated_data["summary_stats"]["total_samples"] += 1
+                    
+                    raw = log.get("raw_payload", {})
+                    chain = raw.get("decision_chain", [])
+                    chain_str = " ".join(chain)
+                    
+                    # 记录用于时间线计算
+                    is_occupied = raw.get("result") == "occupied"
+                    area_logs_for_timeline.append({
+                        "timestamp": log.get("timestamp"),
+                        "is_occupied": is_occupied
+                    })
+                    
+                    # 统计判定层级
+                    if "直接确认有人" in chain_str:
+                        area_stats["lvl1_count"] += 1
+                        aggregated_data["summary_stats"]["lvl1_direct_confirm"] += 1
+                    elif "Gemma 二级裁决" in chain_str:
+                        area_stats["lvl2_count"] += 1
+                        aggregated_data["summary_stats"]["lvl2_gemma_reviews"] += 1
                         
-                        raw = log.get("raw_payload", {})
-                        chain = raw.get("decision_chain", [])
-                        chain_str = " ".join(chain)
-                        
-                        # 记录用于时间线计算
-                        is_occupied = raw.get("result") == "occupied"
-                        area_logs_for_timeline.append({
-                            "timestamp": log.get("timestamp"),
-                            "is_occupied": is_occupied
-                        })
-                        
-                        # 统计判定层级
-                        if "直接确认有人" in chain_str:
-                            area_stats["lvl1_count"] += 1
-                            aggregated_data["summary_stats"]["lvl1_direct_confirm"] += 1
-                        elif "Gemma 二级裁决" in chain_str:
-                            area_stats["lvl2_count"] += 1
-                            aggregated_data["summary_stats"]["lvl2_gemma_reviews"] += 1
-                            
-                            ts = log.get("timestamp", "Unknown Time")
-                            if "Gemma 复核: 确认" in chain_str:
-                                area_stats["lvl2_yes"] += 1
-                                aggregated_data["summary_stats"]["lvl2_gemma_confirmed"] += 1
-                                area_stats["lvl2_details"].append({"time": ts, "res": "YES", "reason": chain})
-                            elif "Gemma 复核: 否决" in chain_str:
-                                area_stats["lvl2_no"] += 1
-                                aggregated_data["summary_stats"]["lvl2_gemma_denied"] += 1
-                                area_stats["lvl2_details"].append({"time": ts, "res": "NO", "reason": chain})
-                except:
-                    pass
+                        ts = log.get("timestamp", "Unknown Time")
+                        if "Gemma 复核: 确认" in chain_str:
+                            area_stats["lvl2_yes" ] += 1
+                            aggregated_data["summary_stats"]["lvl2_gemma_confirmed"] += 1
+                            area_stats["lvl2_details"].append({"time": ts, "res": "YES", "reason": chain})
+                        elif "Gemma 复核: 否决" in chain_str:
+                            area_stats["lvl2_no"] += 1
+                            aggregated_data["summary_stats"]["lvl2_gemma_denied"] += 1
+                            area_stats["lvl2_details"].append({"time": ts, "res": "NO", "reason": chain})
+            except:
+                pass
         
         # 5. 计算时间段
-        area_stats["timeline"] = calculate_time_segments(area_logs_for_timeline)
+        if area_logs_for_timeline:
+            area_stats["timeline"] = calculate_time_segments(area_logs_for_timeline)
+        
         aggregated_data["areas"][area_name] = area_stats
+        
+        # 显式清理局部大变量
+        del area_logs_for_timeline
+        gc.collect()
 
     # 6. 生成报告
     print("  🧠 正在生成 Gemma 增强深度分析报告...")
     summary_text = generate_gemma_summary(aggregated_data)
     
     report = {
-        "version": "3.0",
+        "version": "3.2",
         "generated_at": datetime.now().isoformat(),
         "stats": aggregated_data,
         "summary": summary_text
@@ -309,16 +336,24 @@ def process_day(target_date):
     with open(os.path.join(day_dir, "daily_summary.json"), 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     
-    print(f"✅ 处理完成！日报内容：\n\n{summary_text}")
+    print(f"✅ 处理完成！报告已保存至: {os.path.join(day_dir, 'daily_summary.json')}")
 
-    # 7. 主动释放 Gemma 内存
+    # 7. 强力释放 Gemma 内存
     try:
-        print("  🧹 正在释放 Gemma 插槽内存...")
-        requests.delete(GEMMA_SLOTS_URL, timeout=5.0)
+        print("  🧹 正在强力释放 Gemma 插槽内存 (Slots 0-7)...")
+        for i in range(8): # 扩大清理范围
+            requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=2.0)
     except:
         pass
+    
+    # 8. 脚本最终垃圾回收
+    del aggregated_data
+    gc.collect()
 
 if __name__ == "__main__":
-    # 默认处理今天，或者通过参数指定日期 YYYY-MM-DD
-    target = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y-%m-%d")
-    process_day(target)
+    parser = argparse.ArgumentParser(description="BuildingOS Vision 每日数据清理与总结脚本")
+    parser.add_argument("date", nargs="?", default=datetime.now().strftime("%Y-%m-%d"), help="目标日期 (YYYY-MM-DD)")
+    parser.add_argument("--only-summary", action="store_true", help="仅生成总结报告，跳过图片压缩")
+    
+    args = parser.parse_args()
+    process_day(args.date, only_summary=args.only_summary)
