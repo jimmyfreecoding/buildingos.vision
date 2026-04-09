@@ -306,24 +306,21 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
     不管是否触发 MQTT 报警，每一分钟（或每一个采样周期）都将原始判定结果
     追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
     """
+    if not cam_id or not area_code or area_code == "UNKNOWN":
+        log_info(f"⚠️ 跳过保存无效日志: cam_id='{cam_id}', area_code='{area_code}'")
+        return
+
     try:
         log_dir_base = get_real_path(config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs"))
         today_str = datetime.now().strftime("%Y-%m-%d")
         safe_area = str(area_code).replace('/', '_').replace('\\', '_')
         target_dir = os.path.join(log_dir_base, today_str, safe_area)
         os.makedirs(target_dir, exist_ok=True)
-
-        # 清理旧文件
-        files = [os.path.join(target_dir, f) for f in os.listdir(target_dir) if f.endswith('.json')]
-        files.sort(key=os.path.getmtime)
-        max_logs_per_day = config.get("storage_quota", {}).get("max_logs_per_day_per_area", 2000)
-        if len(files) > max_logs_per_day:
-            for f in files[:-max_logs_per_day]:
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
-
+        
+        # 强制填充 decision_chain，防止前端显示“无日志”
+        if not decision_chain:
+            decision_chain = ["AI 引擎默认状态更新"]
+        
         # 写入图片
         image_paths = []
         timestamp_ms = int(time.time() * 1000)
@@ -356,18 +353,17 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
             "raw_payload": raw_payload or {
                 "result": "occupied" if has_person else "empty",
                 "source": f"{presence_detector_source}+gemma",
-                "decision_chain": decision_chain or [],
+                "decision_chain": decision_chain,
                 "yolo_count": yolo_count
             }
         }
         
         json_path = os.path.join(target_dir, f"{cam_id}_sample_{timestamp_ms}.json")
         with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(log_entry, f, ensure_ascii=False, indent=2)
+            json.dump(log_entry, f, ensure_ascii=False, indent=4)
             
-        log_info(f"[{cam_id}] 已写入分钟级底层数据点到: {json_path}")
     except Exception as e:
-        log_info(f"[{cam_id}] 保存分钟级日志失败: {e}")
+        log_info(f"❌ 保存前端日志失败: {e}")
 
 def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
     """带冷却去重机制的 MQTT 发布，同时持久化到本地日志供 Web 查阅"""
@@ -595,16 +591,27 @@ def process_camera(cam_id, cam_info):
                         decision_chain.append(f"Detector 高置信度({max_conf:.2f})直接确认有人")
                     else:
                         # 2. 否则，送给 Gemma 做最终裁决
-                        # 注意：为了不干扰 Gemma，送给它的是【原始图 frame】，而不是带框的标注图
-                        prompt = "图中是否有真实的、活着的人（包括坐着、站着或正在操作电脑的人）？请回答 YES 或 NO。"
+                        # 改进提示词：尽量简单直接
+                        prompt = "图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
                             gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
-                            decision_chain.append(f"Gemma 二级裁决结果: {gemma_res}")
+                            
+                            if gemma_res == "UNKNOWN":
+                                # 异常降级保护：如果 Gemma 挂了或超时，降级采信 Detector 的原始结果
+                                if yolo_count > 0:
+                                    gemma_res = "YES"
+                                    decision_chain.append("Gemma 响应异常，降级采信 Detector 结果: YES")
+                                else:
+                                    gemma_res = "NO"
+                                    decision_chain.append("Gemma 响应异常，降级采信 Detector 结果: NO")
+                            else:
+                                decision_chain.append(f"Gemma 二级裁决结果: {gemma_res}")
                         else:
-                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
-                            gemma_res = "NO"
+                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，降级采信 Detector")
+                            gemma_res = "YES" if yolo_count > 0 else "NO"
+                            decision_chain.append("图像编码失败，降级采信 Detector")
                     
                     if gemma_res == "YES":
                         has_person = True
@@ -615,6 +622,7 @@ def process_camera(cam_id, cam_info):
                                 decision_chain.append("Gemma 复核: Detector漏报，但Gemma在全图中发现了人员")
                         log_info(f"[{cam_id}] Presence: 确认有人 (YOLO框: {yolo_count}个, MaxConf: {max_conf:.2f})")
                     else:
+                        has_person = False # 确保明确赋值
                         if yolo_count > 0:
                             decision_chain.append("Gemma 复核: 否决 (认定疑似目标为误报/假人)")
                         else:

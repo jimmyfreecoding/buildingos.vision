@@ -12,7 +12,7 @@
             <el-option label="基础描述 (Describe this image)" value="Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)" />
             <el-option label="抽烟检测验证" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons. Please reply in Chinese. (图片中是否有人在抽烟？用中文回复是或否，并说明理由。)" />
             <el-option label="安全帽佩戴验证" value="Are all people in the image wearing safety helmets? Detail any violations. Please reply in Chinese. (图片中所有人是否都佩戴了安全帽？请用中文详细说明违规情况。)" />
-            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果有，请指出他们的位置。请用中文回复。" />
+            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。" />
             <el-option label="自定义 (Custom)" value="custom" />
           </el-select>
         </el-form-item>
@@ -122,7 +122,7 @@ const inferForm = ref({
   prompt: 'Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)',
   imageUrl: '',
   imageBase64: '',
-  enableThinking: true
+  enableThinking: false
 })
 
 const onTemplateChange = (val) => {

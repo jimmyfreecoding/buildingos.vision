@@ -230,7 +230,13 @@
                     <b style="color: #303133;">判断证据链:</b>
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
                       <li v-for="(step, idx) in (log.raw_payload?.decision_chain || ['直接采信无日志'])" :key="idx" style="margin-bottom: 3px;">
-                        {{ step }}
+                        <span v-if="step.includes('Detector漏报')">
+                          {{ step }}
+                          <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
+                            [手动复测]
+                          </el-link>
+                        </span>
+                        <span v-else>{{ step }}</span>
                       </li>
                     </ul>
                   </div>
@@ -413,6 +419,64 @@ const submitTest = async () => {
 }
 // -------------------------
 
+const manualReviewing = ref('')
+
+const handleManualGemmaReview = async (log) => {
+  if (!log.images || log.images.length === 0) return
+  
+  manualReviewing.value = log.id
+  try {
+    // 1. 获取原始图片 (如果是[annotated, original]，则选第二个；否则选第一个)
+    const imageUrl = getImageUrl(log.images[1] || log.images[0])
+    
+    // 2. 将图片转换为 Base64
+    const response = await fetch(imageUrl)
+    const blob = await response.blob()
+    const reader = new FileReader()
+    const base64Promise = new Promise((resolve) => {
+      reader.onloadend = () => resolve(reader.result)
+      reader.readAsDataURL(blob)
+    })
+    const imageBase64 = await base64Promise
+
+    // 3. 调用后端复核接口
+    const prompt = (
+      "图中是否有真实的、活着的人（包括坐着、站着、走路或正在操作电脑的人）？\n"
+      "注意：请排除雕像、海报、假人、反光、影子或深夜空无一人的场景。\n"
+      "如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
+    )
+    
+    const res = await axios.post('/api/gemma/infer', {
+      image: imageBase64,
+      prompt: prompt,
+      enableThinking: true
+    })
+
+    const result = res.data.result || 'No result'
+    const reasoning = res.data.reasoning || ''
+    
+    ElMessageBox.alert(
+      `<div style="font-size: 14px;">
+        <p><b>复测结果:</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
+        <p style="margin-top: 10px;"><b>Gemma 思维链 (Reasoning):</b></p>
+        <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266; max-height: 200px; overflow-y: auto;">
+          ${reasoning || '无'}
+        </div>
+      </div>`,
+      '手动实时复测结果 (Gemma 4 E2B)',
+      {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '关闭',
+        width: '500px'
+      }
+    )
+  } catch (e) {
+    ElMessage.error('手动复测失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    manualReviewing.value = ''
+  }
+}
+
 const toggleAutoRefresh = (val) => {
   if (val) {
     refreshInterval = setInterval(() => {
@@ -446,7 +510,8 @@ const fetchLogs = async (silent = false) => {
   if (!silent) loading.value = true
   try {
     const res = await axios.get('/api/occupancy/logs')
-    allLogs.value = res.data || []
+    // 过滤掉脏数据 (没有摄像头ID或场景代码的无效日志)
+    allLogs.value = (res.data || []).filter(l => l.camera_id && l.areaCode && l.areaCode !== 'UNKNOWN')
     
     if (!selectedArea.value && uniqueAreas.value.length > 0) {
       selectedArea.value = uniqueAreas.value[0]

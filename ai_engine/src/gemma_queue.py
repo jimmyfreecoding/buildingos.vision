@@ -101,7 +101,7 @@ class GemmaReviewQueue:
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             img_url = f"data:image/jpeg;base64,{img_b64}"
             
-            # 3. 构造 OpenAI 兼容的消息体 (同步验证成功的逻辑)
+            # 3. 构造 OpenAI 兼容的消息体 (使用传入的 prompt)
             messages = [
                 {
                     "role": "system",
@@ -111,7 +111,7 @@ class GemmaReviewQueue:
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": img_url}},
-                        {"type": "text", "text": f"Is there any person in this image? YES or NO."}
+                        {"type": "text", "text": f"{prompt}"}
                     ]
                 }
             ]
@@ -124,9 +124,9 @@ class GemmaReviewQueue:
                     "enable_thinking": False  # 禁用思维链，逼迫模型直接输出结果
                 },
                 "temperature": 0.0,
-                "max_tokens": 16,
+                "max_tokens": 32, # 稍微增加点 token，防止截断
                 "stream": False,
-                "stop": ["<end_of_turn>", "<eos>"]
+                "stop": ["<end_of_turn>", "<eos>", "\n"]
             }
             
             # 5. 发起请求
@@ -139,16 +139,20 @@ class GemmaReviewQueue:
                 reasoning = msg.get('reasoning_content', '').strip().upper()
                 
                 # 综合判定：同时看 content 和 reasoning_content
-                final_text = content + " " + reasoning
-                print(f"DEBUG: Gemma Response (Combined): '{final_text.strip()}'")
+                # 优先级：首先看 content 是否包含 YES/NO。如果不包含，再看 reasoning
+                # 改进判定：只有在内容非常明确的情况下才采信
                 
-                # 判定逻辑：寻找关键词
-                if "YES" in final_text:
+                if content.startswith("YES") or "YES" in content[:10]:
                     return "YES"
-                elif "NO" in final_text:
+                elif content.startswith("NO") or "NO" in content[:10]:
+                    return "NO"
+                elif "YES" in reasoning:
+                    return "YES"
+                elif "NO" in reasoning:
                     return "NO"
                 else:
-                    return "NO" # 默认保守处理
+                    print(f"DEBUG: Gemma Response unclear: content='{content}', reasoning='{reasoning}'")
+                    return "UNKNOWN"
             else:
                 print(f"❌ Gemma API 状态码异常: {resp.status_code}")
                 return "UNKNOWN"
@@ -200,8 +204,8 @@ class GemmaReviewQueue:
         except queue.Full:
             print(f"⚠️ Gemma 队列已满，直接拒绝任务 {task_id}，执行降级")
             # 降级规则 (文档 7.2)：
-            # Presence 降级按“有人”处理 (YES)；Smoking 降级按“不告警”处理 (UNKNOWN/NO)
-            return "YES" if task_type == 'presence' else "UNKNOWN"
+            # 现在改为返回 UNKNOWN，让业务逻辑决定是否降级到 YOLO
+            return "UNKNOWN"
 
         # 4. 阻塞等待结果 (最多等 20 秒)
         # print(f"⏳ 任务 {task_id} 排队中 (优先级 {priority})...")
@@ -209,7 +213,7 @@ class GemmaReviewQueue:
         
         if not waited or task['result'] is None:
             print(f"⚠️ 任务 {task_id} 等待结果超时，执行降级")
-            return "YES" if task_type == 'presence' else "UNKNOWN"
+            return "UNKNOWN"
             
         return task['result']
 
