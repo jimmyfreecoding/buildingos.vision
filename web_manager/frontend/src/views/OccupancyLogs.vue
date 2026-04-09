@@ -233,7 +233,7 @@
                         <span v-if="step.includes('Gemma')">
                           {{ step }}
                           <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
-                            [手动复测]
+                            [手动复核]
                           </el-link>
                         </span>
                         <span v-else>{{ step }}</span>
@@ -331,7 +331,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Calendar, VideoCamera, Plus, Picture, Search, Document } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 
@@ -425,6 +425,12 @@ const handleManualGemmaReview = async (log) => {
   if (!log.images || log.images.length === 0) return
   
   manualReviewing.value = log.id
+  const loadingInstance = ElLoading.service({
+    lock: true,
+    text: 'Gemma 正在进行实时复核推理...',
+    background: 'rgba(0, 0, 0, 0.7)',
+  })
+
   try {
     // 1. 获取原始图片 (如果是[annotated, original]，则选第二个；否则选第一个)
     const imageUrl = getImageUrl(log.images[1] || log.images[0])
@@ -453,13 +459,13 @@ const handleManualGemmaReview = async (log) => {
     
     ElMessageBox.alert(
       `<div style="font-size: 14px;">
-        <p><b>复测结果:</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
+        <p><b>复核结果:</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
         <p style="margin-top: 10px;"><b>Gemma 思维链 (Reasoning):</b></p>
         <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266; max-height: 200px; overflow-y: auto;">
           ${reasoning || '无'}
         </div>
       </div>`,
-      '手动实时复测结果 (Gemma 4 E2B)',
+      '手动实时复核结果 (Gemma 4 E2B)',
       {
         dangerouslyUseHTMLString: true,
         confirmButtonText: '关闭',
@@ -467,9 +473,10 @@ const handleManualGemmaReview = async (log) => {
       }
     )
   } catch (e) {
-    ElMessage.error('手动复测失败: ' + (e.response?.data?.error || e.message))
+    ElMessage.error('手动复核失败: ' + (e.response?.data?.error || e.message))
   } finally {
     manualReviewing.value = ''
+    loadingInstance.close()
   }
 }
 

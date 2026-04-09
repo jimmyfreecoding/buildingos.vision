@@ -61,6 +61,22 @@
               <Fold v-else />
             </el-icon>
           </el-button>
+          
+          <!-- System Metrics Display -->
+          <div class="header-metrics" v-if="sysInfo">
+            <span class="metric-badge">
+              <span class="label">CPU</span>
+              <span class="value">{{ sysInfo.cpu?.usage?.toFixed(1) }}%</span>
+            </span>
+            <span class="metric-badge">
+              <span class="label">RAM</span>
+              <span class="value">{{ sysInfo.memory?.ram?.usagePercent?.toFixed(1) }}%</span>
+            </span>
+            <span class="metric-badge">
+              <span class="label">PWR</span>
+              <span class="value">{{ (sysInfo.power?.total / 1000 || 0).toFixed(1) }}W</span>
+            </span>
+          </div>
         </div>
         <div class="header-right">
           <!-- Theme Switch -->
@@ -112,7 +128,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { 
@@ -129,6 +145,17 @@ const isRebooting = ref(false)
 const isCollapse = ref(false)
 const isDark = ref(localStorage.getItem('theme') === 'dark')
 const username = ref(localStorage.getItem('username') || 'Admin')
+const sysInfo = ref(null)
+let sysTimer = null
+
+const fetchSysInfo = async () => {
+  try {
+    const res = await axios.get('/api/system/info')
+    sysInfo.value = res.data
+  } catch (e) {
+    // Silently ignore errors for header display
+  }
+}
 
 const toggleTheme = (val) => {
   const html = document.documentElement
@@ -194,6 +221,14 @@ const startPingLoop = () => {
 onMounted(() => {
   // Initialize theme
   toggleTheme(isDark.value)
+  
+  // Start polling system metrics
+  fetchSysInfo()
+  sysTimer = setInterval(fetchSysInfo, 3000) // Every 3 seconds
+})
+
+onBeforeUnmount(() => {
+  if (sysTimer) clearInterval(sysTimer)
 })
 </script>
 
@@ -250,6 +285,36 @@ onMounted(() => {
   border-bottom: 1px solid var(--el-border-color-lighter);
   background-color: var(--el-bg-color);
   padding: 0 20px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.header-metrics {
+  display: flex;
+  margin-left: 20px;
+  gap: 15px;
+}
+
+.metric-badge {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  font-family: monospace;
+}
+
+.metric-badge .label {
+  font-size: 10px;
+  color: var(--el-text-color-secondary);
+  text-transform: uppercase;
+}
+
+.metric-badge .value {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--el-color-primary);
 }
 
 .header-right {
