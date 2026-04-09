@@ -371,11 +371,12 @@ def process_day(target_date, only_summary=False, should_reboot=False):
     
     print(f"✅ 处理完成！报告已保存至: {os.path.join(day_dir, 'daily_summary.json')}")
 
-    # 8. 强力释放 Gemma 内存
+    # 8. 物理重启 Gemma 服务 (彻底回收大 Token 交互占用的内存)
     try:
-        print("  🧹 正在强力释放 Gemma 插槽内存 (Slots 0-7)...")
-        for i in range(8): # 扩大清理范围
-            requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=1.0)
+        print("  🧹 正在物理重启 llama-gemma 服务以释放内存...")
+        # 清理 Slots 只是逻辑清理，重启服务才能让 OS 真正回收显存/内存
+        os.system("sudo systemctl restart llama-gemma")
+        time.sleep(2) # 等待启动
     except:
         pass
     

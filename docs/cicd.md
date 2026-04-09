@@ -186,6 +186,10 @@ pip install pycuda==2024.1.2
 mkdir -p ~/buildingos.vision/zlm/www/occupancy_logs
 sudo chown -R buildingos:buildingos ~/buildingos.vision/zlm/www/occupancy_logs
 sudo chmod -R 775 ~/buildingos.vision/zlm/www/occupancy_logs
+
+# 7. 设置每日自动清理、总结与重启定时任务 (基础部署要求)
+chmod +x ~/buildingos.vision/ai_engine/src/setup_cron.sh
+~/buildingos.vision/ai_engine/src/setup_cron.sh
 ```
 
 ### 6.2 安装并启动 systemd 服务
@@ -221,17 +225,30 @@ journalctl -u ai-engine -f
 ## 8. 风险与回滚策略
 
 ### 8.1 风险
-
 - 运维脚本若仍只会操作容器，可能出现“代码已更新但 ai-engine 未重启”。
 - 若跳过 `venv` 规范，系统污染风险会重新出现。
 
 ### 8.2 回滚
-
 如需临时回滚到容器版：
-
 1. `sudo systemctl stop ai-engine`
 2. `sudo systemctl disable ai-engine`
 3. `docker compose -f docker-compose.yml --profile legacy-ai-engine up -d ai-engine`
+
+---
+
+## 9. 自动化维护与 AI 报告
+
+为保证边缘网关长期稳定运行并回收存储空间，系统内置了自动化维护机制。
+
+### 9.1 定时任务 (Cron Job)
+通过 `setup_cron.sh` 配置，每天凌晨 **02:00** 自动执行以下操作：
+1. **图片压缩**：将昨日生成的 `.jpg` 转换为 **WebP (50% 质量)**，并将分辨率限制在 800px 宽，可节省约 70% 磁盘空间。
+2. **AI 日报生成**：本地 Python 统计全天区域占用时长与复核成功率，并调用 Gemma 生成 Markdown 格式的深度总结。
+3. **系统重启**：清理内存碎片、重置底层驱动状态，确保系统每日以“零负载”状态开始新的一天。
+
+### 9.2 日志与报告路径
+- **维护日志**：`/home/buildingos/buildingos.vision/ai_engine/cleanup.log`
+- **AI 总结报告**：`/home/buildingos/buildingos.vision/zlm/www/occupancy_logs/YYYY-MM-DD/daily_summary.json`
 
 ---
 
@@ -271,6 +288,9 @@ sudo cp ~/buildingos.vision/deploy/ai-engine.service /etc/systemd/system/ai-engi
 sudo systemctl daemon-reload && \
 sudo systemctl enable ai-engine && \
 sudo systemctl start ai-engine && \
+# 6. 设置自动化维护定时任务 (每日 02:00 清理并重启)
+chmod +x ~/buildingos.vision/ai_engine/src/setup_cron.sh && \
+~/buildingos.vision/ai_engine/src/setup_cron.sh && \
 sudo systemctl status ai-engine --no-pager -n 20
 ```
 
