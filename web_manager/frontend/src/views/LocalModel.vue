@@ -3,31 +3,31 @@
     <el-card class="box-card inference-card">
       <template #header>
         <div class="card-header">
-          <span>图像推理验证 (Image Inference)</span>
+          <span>{{ $t('localModel.title') }}</span>
         </div>
       </template>
       <el-form :model="inferForm" label-width="120px" @submit.prevent>
-        <el-form-item label="推理提示词模版">
-          <el-select v-model="inferForm.promptTemplate" placeholder="请选择提示词模版" style="width: 100%" @change="onTemplateChange">
-            <el-option label="基础描述 (Describe this image)" value="Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)" />
-            <el-option label="抽烟检测验证" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons. Please reply in Chinese. (图片中是否有人在抽烟？用中文回复是或否，并说明理由。)" />
-            <el-option label="安全帽佩戴验证" value="Are all people in the image wearing safety helmets? Detail any violations. Please reply in Chinese. (图片中所有人是否都佩戴了安全帽？请用中文详细说明违规情况。)" />
-            <el-option label="人体存在检测 (Human Presence)" value="图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。" />
-            <el-option label="自定义 (Custom)" value="custom" />
+        <el-form-item :label="$t('localModel.template')">
+          <el-select v-model="inferForm.promptTemplate" :placeholder="$t('localModel.templatePlaceholder')" style="width: 100%" @change="onTemplateChange">
+            <el-option :label="$t('localModel.descTemplate')" value="Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)" />
+            <el-option :label="$t('localModel.smokingTemplate')" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons. Please reply in Chinese. (图片中是否有人在抽烟？用中文回复是或否，并说明理由。)" />
+            <el-option :label="$t('localModel.helmetTemplate')" value="Are all people in the image wearing safety helmets? Detail any violations. Please reply in Chinese. (图片中所有人是否都佩戴了安全帽？请用中文详细说明违规情况。)" />
+            <el-option :label="$t('localModel.presenceTemplate')" value="图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。" />
+            <el-option :label="$t('localModel.customTemplate')" value="custom" />
           </el-select>
         </el-form-item>
         
-        <el-form-item label="提示词内容">
+        <el-form-item :label="$t('localModel.promptLabel')">
           <el-input 
             type="textarea" 
             v-model="inferForm.prompt" 
             :rows="3" 
-            placeholder="输入您要询问的提示词内容..."
+            :placeholder="$t('localModel.promptPlaceholder')"
             :disabled="inferForm.promptTemplate !== 'custom'"
           />
         </el-form-item>
 
-        <el-form-item label="上传图像">
+        <el-form-item :label="$t('localModel.uploadImage')">
           <el-upload
             class="avatar-uploader"
             action="#"
@@ -41,23 +41,23 @@
           </el-upload>
         </el-form-item>
 
-        <el-form-item label="开启思考过程">
+        <el-form-item :label="$t('localModel.enableThinking')">
           <el-switch
             v-model="inferForm.enableThinking"
-            active-text="是 (更准确，但较慢)"
-            inactive-text="否 (快速回复)"
+            :active-text="$t('localModel.thinkingYes')"
+            :inactive-text="$t('localModel.thinkingNo')"
           />
         </el-form-item>
 
         <el-form-item>
           <el-button type="primary" @click="submitInference" :loading="inferring" :disabled="!inferForm.imageUrl">
-            开始推理
+            {{ $t('localModel.startInference') }}
           </el-button>
         </el-form-item>
       </el-form>
       
       <div class="result-section" v-if="inferResult || inferError || inferring">
-        <el-divider>推理结果</el-divider>
+        <el-divider>{{ $t('localModel.resultDivider') }}</el-divider>
         <el-alert v-if="inferError" :title="inferError" type="error" show-icon :closable="false" />
         <div v-else-if="inferring" class="loading-state">
           <el-skeleton :rows="5" animated />
@@ -67,7 +67,7 @@
           <el-collapse v-if="inferReasoning" class="reasoning-collapse">
             <el-collapse-item name="1">
               <template #title>
-                <el-icon class="header-icon"><Cpu /></el-icon> Reasoning (思考过程)
+                <el-icon class="header-icon"><Cpu /></el-icon> {{ $t('localModel.reasoningTitle') }}
               </template>
               <div class="reasoning-content">
                 <pre>{{ inferReasoning }}</pre>
@@ -108,9 +108,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { Plus, Cpu, Aim, Odometer, Document, Timer } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
+const { t } = useI18n()
 const inferring = ref(false)
 const inferResult = ref('')
 const inferReasoning = ref('')
@@ -136,7 +138,7 @@ const onTemplateChange = (val) => {
 const handleImageChange = (file) => {
   const rawFile = file.raw
   if (!rawFile.type.startsWith('image/')) {
-    ElMessage.error('只能上传图片文件!')
+    ElMessage.error(t('localModel.onlyImageError'))
     return false
   }
   
@@ -153,11 +155,11 @@ const handleImageChange = (file) => {
 
 const submitInference = async () => {
   if (!inferForm.value.imageBase64) {
-    ElMessage.warning('请先上传图片')
+    ElMessage.warning(t('localModel.uploadRequired'))
     return
   }
   if (!inferForm.value.prompt) {
-    ElMessage.warning('提示词不能为空')
+    ElMessage.warning(t('localModel.promptRequired'))
     return
   }
 

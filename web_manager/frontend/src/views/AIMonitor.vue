@@ -6,12 +6,12 @@
         <el-card class="box-card video-card" body-style="height: calc(100% - 60px); padding: 10px;">
           <template #header>
             <div class="card-header">
-              <span><el-icon><VideoCamera /></el-icon> 实时视频监控矩阵</span>
-              <el-tag type="success" size="small" v-if="cameras.length > 0">{{ cameras.length }} 路在线</el-tag>
+              <span><el-icon><VideoCamera /></el-icon> {{ $t('monitor.videoMatrix') }}</span>
+              <el-tag type="success" size="small" v-if="cameras.length > 0">{{ $t('monitor.onlineCount', { count: cameras.length }) }}</el-tag>
             </div>
           </template>
           <CameraGrid v-if="cameras.length > 0" :cameras="cameras" />
-          <el-empty v-else description="暂无配置的视频流，请前往流媒体配置页面添加" />
+          <el-empty v-else :description="$t('monitor.noConfig')" />
         </el-card>
       </el-col>
 
@@ -20,8 +20,8 @@
         <el-card class="box-card logs-card" body-style="height: calc(100% - 60px); padding: 0; display: flex; flex-direction: column;">
           <template #header>
             <div class="card-header">
-              <span><el-icon><DataLine /></el-icon> AI 引擎实时日志</span>
-              <el-switch v-model="autoScroll" active-text="自动滚动" size="small" />
+              <span><el-icon><DataLine /></el-icon> {{ $t('monitor.aiLogs') }}</span>
+              <el-switch v-model="autoScroll" :active-text="$t('monitor.autoScroll')" size="small" />
             </div>
           </template>
           
@@ -41,10 +41,12 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import axios from 'axios'
+import { useI18n } from 'vue-i18n'
 import { VideoCamera, DataLine } from '@element-plus/icons-vue'
 import { io } from 'socket.io-client'
 import CameraGrid from './CameraGrid.vue'
 
+const { t } = useI18n()
 const cameras = ref([])
 const logs = ref([])
 const autoScroll = ref(true)
@@ -86,7 +88,7 @@ const setupWebSocket = () => {
   socket = io(serverUrl)
 
   socket.on('connect', () => {
-    logs.value.push({ timestamp: new Date(), message: '--- Connected to Log Stream ---', camId: 'system' })
+    logs.value.push({ timestamp: new Date(), message: t('monitor.logConnected'), camId: 'system' })
   })
 
   socket.on('log', (data) => {
@@ -98,7 +100,7 @@ const setupWebSocket = () => {
   })
 
   socket.on('disconnect', () => {
-    logs.value.push({ timestamp: new Date(), message: '--- Disconnected from Log Stream ---', camId: 'system' })
+    logs.value.push({ timestamp: new Date(), message: t('monitor.logDisconnected'), camId: 'system' })
   })
 }
 

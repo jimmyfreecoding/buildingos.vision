@@ -171,7 +171,7 @@ const toggleTheme = (val) => {
 const handleLangCommand = (lang) => {
   locale.value = lang
   localStorage.setItem('lang', lang)
-  ElMessage.success(lang === 'zh' ? '语言已切换为中文' : 'Language switched to English')
+  ElMessage.success(t('common.langSwitched'))
 }
 
 const handleUserCommand = (command) => {
@@ -197,7 +197,7 @@ const handleReboot = () => {
       isRebooting.value = true
       startPingLoop()
     } catch (e) {
-      ElMessage.error('发送重启指令失败')
+      ElMessage.error(t('common.rebootFailed'))
     }
   }).catch(() => {})
 }
@@ -209,7 +209,7 @@ const startPingLoop = () => {
         await axios.get('/api/ping', { timeout: 2000 })
         clearInterval(timer)
         isRebooting.value = false
-        ElMessage.success('设备已重新连接！')
+        ElMessage.success(t('common.rebootSuccess'))
         window.location.reload()
       } catch (e) {
         console.log('Waiting for device to boot...')

@@ -94,8 +94,8 @@
                   {{ engine.name }}: {{ formatEngineValue(engine.value) }}
                 </el-tag>
               </div>
-              <div class="engine-note">用于判断视频链路是否抢占资源：NVDEC/NVENC/VIC 持续高占用时，本地大模型响应会变慢。</div>
-              <div v-if="isEngineAllIdle" class="engine-idle-note">当前全部为 0% 表示各硬件引擎处于空闲状态，并非故障。</div>
+              <div class="engine-note">{{ $t('dashboard.engineNote') }}</div>
+              <div v-if="isEngineAllIdle" class="engine-idle-note">{{ $t('dashboard.engineIdleNote') }}</div>
             </el-card>
           </div>
         </el-card>
@@ -104,7 +104,7 @@
         <el-card class="box-card gemma-card">
           <template #header>
             <div class="card-header">
-              <span><el-icon><Cpu /></el-icon> 本地大模型状态 (Gemma 4 E2B)</span>
+              <span><el-icon><Cpu /></el-icon> {{ $t('dashboard.gemmaStatus') }} (Gemma 4 E2B)</span>
               <el-tag size="small" :type="gemmaStatus === 'Running' ? 'success' : (gemmaStatus === 'Loading' ? 'warning' : 'danger')">
                 <span style="display: flex; align-items: center; gap: 5px;">
                   <span v-if="gemmaStatus === 'Running'" class="status-dot green"></span>
@@ -117,13 +117,13 @@
           </template>
           <div class="gemma-content" v-loading="loadingSys">
             <el-descriptions :column="1" border size="small" v-if="gemmaStatus === 'Running' && gemmaDetails">
-              <el-descriptions-item label="模型实例">
+              <el-descriptions-item :label="$t('dashboard.modelInstance')">
                 {{ gemmaDetails.props?.default_generation_settings?.model || 'llama.cpp GGUF Model' }}
               </el-descriptions-item>
               <el-descriptions-item label="上下文容量 (Context Size)">
                 {{ gemmaDetails.props?.default_generation_settings?.n_ctx || 'Unknown' }} Tokens
               </el-descriptions-item>
-              <el-descriptions-item label="当前运行状态">
+              <el-descriptions-item :label="$t('dashboard.runStatus')">
                 <div v-if="gemmaDetails.slots && gemmaDetails.slots.length > 0">
                   <div v-for="slot in gemmaDetails.slots" :key="slot.id" style="margin-bottom: 5px;">
                     <el-tag size="small" :type="slot.state === 0 ? 'info' : 'primary'">
@@ -140,10 +140,10 @@
               </el-descriptions-item>
             </el-descriptions>
             <div v-else-if="gemmaStatus === 'Loading'">
-              <el-alert title="模型正在加载中，请稍候..." type="warning" show-icon :closable="false" />
+              <el-alert :title="$t('dashboard.modelLoading')" type="warning" show-icon :closable="false" />
             </div>
             <div v-else>
-              <el-alert title="本地大模型服务未启动或无法连接" type="error" show-icon :closable="false" />
+              <el-alert :title="$t('dashboard.modelOffline')" type="error" show-icon :closable="false" />
             </div>
           </div>
         </el-card>
@@ -154,26 +154,26 @@
         <el-card class="box-card zlm-card">
           <template #header>
             <div class="card-header">
-              <span><el-icon><VideoCamera /></el-icon> 流媒体引擎状态 (ZLMediaKit)</span>
-              <el-tag size="small" type="info">每秒刷新</el-tag>
+              <span><el-icon><VideoCamera /></el-icon> {{ $t('dashboard.zlmStatus') }} (ZLMediaKit)</span>
+              <el-tag size="small" type="info">{{ $t('dashboard.refreshPerSec') }}</el-tag>
             </div>
           </template>
           <div class="zlm-content">
             <el-row :gutter="20" style="margin-bottom: 20px;">
               <el-col :span="8">
-                <el-statistic title="活跃流总数" :value="uniqueStreams.length" />
+                <el-statistic :title="$t('dashboard.activeStreams')" :value="uniqueStreams.length" />
               </el-col>
               <el-col :span="8">
-                <el-statistic title="协议分发总数" :value="zlmData.length" />
+                <el-statistic :title="$t('dashboard.totalProtocols')" :value="zlmData.length" />
               </el-col>
               <el-col :span="8">
-                <el-statistic title="当前总带宽" :value="formatBytes(totalBandwidth) + '/s'" />
+                <el-statistic :title="$t('dashboard.totalBandwidth')" :value="formatBytes(totalBandwidth) + '/s'" />
               </el-col>
             </el-row>
 
             <el-table :data="uniqueStreamsData" height="150" style="width: 100%" size="small" border>
-              <el-table-column prop="stream" label="流 ID (Stream)" width="120" />
-              <el-table-column label="可用协议 (Schemas)">
+              <el-table-column prop="stream" :label="$t('dashboard.streamId')" width="120" />
+              <el-table-column :label="$t('dashboard.schemas')">
                 <template #default="scope">
                   <el-tag 
                     v-for="schema in scope.row.schemas" 
@@ -186,7 +186,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="在线时长" width="100">
+              <el-table-column :label="$t('dashboard.uptime')" width="100">
                 <template #default="scope">
                   {{ formatUptime(scope.row.aliveSecond) }}
                 </template>
@@ -199,20 +199,20 @@
         <el-card class="box-card ai-card">
           <template #header>
             <div class="card-header">
-              <span><el-icon><Cpu /></el-icon> AI 算法引擎任务状态</span>
+              <span><el-icon><Cpu /></el-icon> {{ $t('dashboard.aiTasks') }}</span>
             </div>
           </template>
           <div class="ai-content">
              <el-table :data="aiTasks" height="150" style="width: 100%" size="small" border>
-              <el-table-column prop="camId" label="摄像头 ID" width="100" />
-              <el-table-column prop="taskType" label="算法类型" width="120">
+              <el-table-column prop="camId" :label="$t('dashboard.cameraId')" width="100" />
+              <el-table-column prop="taskType" :label="$t('dashboard.algoType')" width="120">
                  <template #default="scope">
                     <el-tag size="small" :type="scope.row.taskType === 'smoking' ? 'danger' : 'primary'">
-                      {{ scope.row.taskType === 'smoking' ? '吸烟检测' : '人员感知' }}
+                      {{ scope.row.taskType === 'smoking' ? $t('dashboard.smoking') : $t('dashboard.presence') }}
                     </el-tag>
                  </template>
               </el-table-column>
-              <el-table-column prop="status" label="运行状态">
+              <el-table-column prop="status" :label="$t('dashboard.status')">
                  <template #default="scope">
                     <el-tag size="small" :type="scope.row.status === 'Running' ? 'success' : 'warning'">
                       <span style="display: flex; align-items: center; gap: 5px;">
@@ -234,8 +234,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import axios from 'axios'
+import { useI18n } from 'vue-i18n'
 import { Monitor, VideoCamera, Cpu } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
+const { t } = useI18n()
 const loadingSys = ref(false)
 let refreshInterval = null
 let zlmInterval = null
@@ -368,26 +371,26 @@ const updateWarnings = (data) => {
   const gpuFreq = data?.gpu?.freq || 0
 
   if (ramUsage >= 90) {
-    warnings.push('统一内存使用率超过 90%，大模型推理可能出现明显延迟。')
+    warnings.push(t('dashboard.warnRam'))
   }
 
   if (swapUsage >= 50) {
-    warnings.push('Swap 使用率超过 50%，系统已经进入高压力区。')
+    warnings.push(t('dashboard.warnSwap'))
   }
 
   if (prevSwapUsed.value > 0) {
     const swapDeltaMb = (swapUsed - prevSwapUsed.value) / (1024 * 1024)
     if (swapDeltaMb > 20) {
-      warnings.push(`Swap 在最近一次采样增长 ${swapDeltaMb.toFixed(1)} MB，存在持续抖动风险。`)
+      warnings.push(t('dashboard.warnSwapDelta', { delta: swapDeltaMb.toFixed(1) }))
     }
   }
 
   if (prevGpuFreq.value > 0 && gpuUtil >= 85 && gpuFreq < prevGpuFreq.value * 0.85) {
-    warnings.push('GPU 利用率高且频率明显下降，可能触发热限制或功耗限制。')
+    warnings.push(t('dashboard.warnGpuFreq'))
   }
 
   if (gpuTemp.value >= 80 || cpuTemp.value >= 80) {
-    warnings.push('温度接近高温区，请关注散热与风扇状态。')
+    warnings.push(t('dashboard.warnTemp'))
   }
 
   const engines = data?.engines || {}
@@ -395,7 +398,7 @@ const updateWarnings = (data) => {
     .filter(([, value]) => typeof value === 'number' && value >= 60)
     .map(([name]) => name)
   if (heavyEngines.length > 0) {
-    warnings.push(`硬件引擎高占用：${heavyEngines.join('、')}，视频链路可能在抢占资源。`)
+    warnings.push(t('dashboard.warnEngines', { engines: heavyEngines.join('、') }))
   }
 
   systemWarnings.value = warnings
@@ -410,7 +413,7 @@ const fetchSysInfo = async () => {
     sysInfo.value = res.data
     updateWarnings(res.data)
   } catch (e) {
-    systemWarnings.value = ['系统状态获取失败，请检查 jtop 采集服务或网络连接。']
+    systemWarnings.value = [t('dashboard.fetchFailed')]
   }
 }
 

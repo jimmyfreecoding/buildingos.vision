@@ -11,7 +11,9 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const props = defineProps({
   cameras: {
     type: Array,
@@ -41,7 +43,7 @@ const createPlayer = (containerId, streamName) => {
     autoWasm: true,
     decoder: '/js/decoder.js',    // 显式指定你的本地 decoder 路径
     hasAudio: false,              // 监控通常不需要声音，关闭可提升性能
-    loadingText: '视频加载中...',
+    loadingText: t('monitor.loadingText'),
     background: '#000000',
     controlAutoHide: true,
     isNotMute: false,             // 确保静音

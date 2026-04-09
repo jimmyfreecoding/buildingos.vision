@@ -2,25 +2,25 @@
   <el-card class="box-card heatmap-card">
     <template #header>
       <div class="card-header">
-        <span><el-icon><Calendar /></el-icon> 场景状态热力图 (Occupancy Heatmap)</span>
+        <span><el-icon><Calendar /></el-icon> {{ $t('logs.heatmapTitle') }}</span>
         <div class="header-buttons">
-          <el-button @click="dialogTestVisible = true" type="warning" plain size="small" :icon="Picture">测试图 (验证算法)</el-button>
-          <el-button @click="fetchLogs" type="primary" plain size="small" :icon="Search" :loading="loading">刷新数据</el-button>
+          <el-button @click="dialogTestVisible = true" type="warning" plain size="small" :icon="Picture">{{ $t('logs.testButton') }}</el-button>
+          <el-button @click="fetchLogs" type="primary" plain size="small" :icon="Search" :loading="loading">{{ $t('logs.refreshButton') }}</el-button>
         </div>
       </div>
     </template>
 
     <div class="filter-section">
-      <el-select v-model="selectedArea" placeholder="选择场景 (Area)" style="width: 250px; margin-right: 15px;" @change="handleFilterChange" filterable>
+      <el-select v-model="selectedArea" :placeholder="$t('logs.selectAreaPlaceholder')" style="width: 250px; margin-right: 15px;" @change="handleFilterChange" filterable>
         <el-option v-for="area in uniqueAreas" :key="area" :label="area" :value="area"></el-option>
       </el-select>
       
       <el-date-picker
         v-model="dateRange"
         type="daterange"
-        range-separator="至"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
+        :range-separator="$t('logs.dateRangeSeparator')"
+        :start-placeholder="$t('logs.startDatePlaceholder')"
+        :end-placeholder="$t('logs.endDatePlaceholder')"
         value-format="YYYY-MM-DD"
         @change="handleFilterChange"
         style="width: 300px; margin-right: 15px;"
@@ -29,18 +29,18 @@
       <!-- Auto refresh switch -->
       <el-switch
         v-model="autoRefresh"
-        active-text="自动刷新 (1m)"
-        inactive-text="关闭刷新"
+        :active-text="$t('logs.autoRefreshOn')"
+        :inactive-text="$t('logs.autoRefreshOff')"
         @change="toggleAutoRefresh"
         style="margin-right: 15px;"
       />
 
       <div class="legend">
-        <span style="margin-right: 10px;">无记录</span>
+        <span style="margin-right: 10px;">{{ $t('logs.legendNoRecord') }}</span>
         <ul class="legend-colors">
           <li class="color-level-null"></li>
         </ul>
-        <span style="margin-right: 10px;">无人</span>
+        <span style="margin-right: 10px;">{{ $t('logs.legendEmpty') }}</span>
         <ul class="legend-colors">
           <li class="color-level-0"></li>
           <li class="color-level-1"></li>
@@ -48,16 +48,16 @@
           <li class="color-level-3"></li>
           <li class="color-level-4"></li>
         </ul>
-        <span>有人(多)</span>
+        <span>{{ $t('logs.legendOccupied') }}</span>
       </div>
     </div>
 
     <div v-loading="loading" class="heatmaps-wrapper">
       <div v-if="!selectedArea" class="no-data">
-        <el-empty description="请先选择场景 (Area)"></el-empty>
+        <el-empty :description="$t('logs.selectAreaTip')"></el-empty>
       </div>
       <div v-else-if="displayDays.length === 0" class="no-data">
-        <el-empty description="该时间段内暂无检测数据"></el-empty>
+        <el-empty :description="$t('logs.noDataTip')"></el-empty>
       </div>
       
       <!-- 左右两块布局，一行两天 -->
@@ -74,7 +74,7 @@
                 class="summary-link"
                 @click="openSummary(dayData.date)"
               >
-                <el-icon><Document /></el-icon> 查看 AI 日报总结
+                <el-icon><Document /></el-icon> {{ $t('logs.viewDailySummary') }}
               </el-button>
             </div>
             <div class="heatmap-container">
@@ -119,44 +119,44 @@
     </div>
 
     <!-- AI 日报总结弹窗 -->
-    <el-dialog v-model="summaryDialogVisible" :title="`AI 日报总结 - ${selectedDate}`" width="700px">
+    <el-dialog v-model="summaryDialogVisible" :title="$t('logs.summaryDialogTitle', { date: selectedDate })" width="700px">
       <div v-if="selectedSummary" class="summary-content">
         <el-descriptions :column="1" border size="small" class="summary-stats">
-          <el-descriptions-item label="生成时间">
+          <el-descriptions-item :label="$t('logs.summaryGeneratedAt')">
             {{ formatTime(selectedSummary.generated_at) }}
           </el-descriptions-item>
-          <el-descriptions-item label="检测概览">
-            <el-tag size="small">总样本: {{ selectedSummary.stats.summary_stats.total_samples }}</el-tag>
-            <el-tag size="small" type="success" style="margin-left: 5px;">一级直认: {{ selectedSummary.stats.summary_stats.lvl1_direct_confirm }}</el-tag>
-            <el-tag size="small" type="warning" style="margin-left: 5px;">二级复核: {{ selectedSummary.stats.summary_stats.lvl2_gemma_reviews }}</el-tag>
+          <el-descriptions-item :label="$t('logs.summaryOverview')">
+            <el-tag size="small">{{ $t('logs.summaryTotalSamples') }}: {{ selectedSummary.stats.summary_stats.total_samples }}</el-tag>
+            <el-tag size="small" type="success" style="margin-left: 5px;">{{ $t('logs.summaryLvl1Direct') }}: {{ selectedSummary.stats.summary_stats.lvl1_direct_confirm }}</el-tag>
+            <el-tag size="small" type="warning" style="margin-left: 5px;">{{ $t('logs.summaryLvl2Reviews') }}: {{ selectedSummary.stats.summary_stats.lvl2_gemma_reviews }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="复核结果">
-            <span style="color: #67C23A">有人确认: {{ selectedSummary.stats.summary_stats.lvl2_gemma_confirmed }}</span>
-            <span style="color: #F56C6C; margin-left: 15px;">误报排除: {{ selectedSummary.stats.summary_stats.lvl2_gemma_denied }}</span>
+          <el-descriptions-item :label="$t('logs.summaryReviewResult')">
+            <span style="color: #67C23A">{{ $t('logs.summaryOccupiedConfirmed') }}: {{ selectedSummary.stats.summary_stats.lvl2_gemma_confirmed }}</span>
+            <span style="color: #F56C6C; margin-left: 15px;">{{ $t('logs.summaryFalseAlarmDenied') }}: {{ selectedSummary.stats.summary_stats.lvl2_gemma_denied }}</span>
           </el-descriptions-item>
         </el-descriptions>
 
         <div class="summary-text-box">
-          <div class="summary-label">Gemma 深度分析报告：</div>
+          <div class="summary-label">{{ $t('logs.summaryGemmaReport') }}</div>
           <div class="summary-markdown" v-html="renderMarkdown(selectedSummary.summary)"></div>
         </div>
 
         <div v-if="selectedSummary.stats.areas[selectedArea]?.lvl2_details?.length > 0" class="summary-details">
-          <div class="summary-label">二级复核时间轴 ({{ selectedArea }})：</div>
+          <div class="summary-label">{{ $t('logs.summaryTimelineTitle', { area: selectedArea }) }}</div>
           <el-table :data="selectedSummary.stats.areas[selectedArea].lvl2_details" size="small" border stripe style="margin-top: 10px;">
-            <el-table-column prop="time" label="时间" width="180">
+            <el-table-column prop="time" :label="$t('logs.summaryTableTime')" width="180">
               <template #default="scope">
                 {{ formatTime(scope.row.time) }}
               </template>
             </el-table-column>
-            <el-table-column prop="res" label="复核结果" width="100">
+            <el-table-column prop="res" :label="$t('logs.summaryTableResult')" width="100">
               <template #default="scope">
                 <el-tag :type="scope.row.res === 'YES' ? 'success' : 'danger'" size="small">
-                  {{ scope.row.res === 'YES' ? '有人' : '无人' }}
+                  {{ scope.row.res === 'YES' ? $t('logs.statusOccupied') : $t('logs.statusEmpty') }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="reason" label="决策链详情">
+            <el-table-column prop="reason" :label="$t('logs.summaryTableChain')">
               <template #default="scope">
                 <span style="font-size: 11px; color: #909399;">{{ scope.row.reason.join(' → ') }}</span>
               </template>
@@ -169,7 +169,7 @@
     <!-- 详情弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1000px" top="5vh">
       <div v-if="dialogLogs.length === 0">
-        <el-empty description="该时间段无记录"></el-empty>
+        <el-empty :description="$t('logs.noRecordTip')"></el-empty>
       </div>
       <el-timeline v-else>
         <el-timeline-item
@@ -183,28 +183,28 @@
               <el-tag :type="getGroupResultTagType(group)" size="small" effect="dark">
                 {{ formatGroupResult(group) }}
               </el-tag>
-              <span class="log-event">人员状态更新 (多路综合)</span>
+              <span class="log-event">{{ $t('logs.statusUpdate') }}</span>
             </div>
             
             <div class="log-meta" style="margin-top: 10px; font-size: 13px; color: #606266;">
-              <p><strong>策略链路:</strong> Object detection+Gemma</p>
+              <p><strong>{{ $t('logs.strategyChain') }}</strong> Object detection+Gemma</p>
               <p style="margin-top: 5px;">
-                <strong>最终裁决:</strong> 
-                <el-popover placement="bottom" title="1-minute sample 裁决过程" width="400" trigger="click">
+                <strong>{{ $t('logs.finalDecision') }}</strong> 
+                <el-popover placement="bottom" :title="$t('logs.decisionProcessTitle')" width="400" trigger="click">
                   <template #reference>
-                    <el-link type="primary" :underline="false">1-minute sample (点击查看)</el-link>
+                    <el-link type="primary" :underline="false">1-minute sample ({{ $t('logs.clickToView') }})</el-link>
                   </template>
                   <div style="font-size: 13px;">
                     <p v-for="log in group.logs" :key="log.id" style="margin-bottom: 5px;">
                       <b><el-icon><VideoCamera /></el-icon> {{ log.camera_id }}:</b> 
-                      <span v-if="log.raw_payload?.result === 'occupied'" style="color: #67C23A; margin-left: 5px;">判定有人</span>
-                      <span v-else style="color: #909399; margin-left: 5px;">判定无人</span>
-                      <span style="margin-left: 5px; color: #E6A23C;" v-if="log.raw_payload?.yolo_count > 0">(检测到 {{ log.raw_payload?.yolo_count }} 人)</span>
+                      <span v-if="log.raw_payload?.result === 'occupied'" style="color: #67C23A; margin-left: 5px;">{{ $t('logs.decidedOccupied') }}</span>
+                      <span v-else style="color: #909399; margin-left: 5px;">{{ $t('logs.decidedEmpty') }}</span>
+                      <span style="margin-left: 5px; color: #E6A23C;" v-if="log.raw_payload?.yolo_count > 0">({{ $t('logs.detectedCount', { count: log.raw_payload?.yolo_count }) }})</span>
                     </p>
                     <el-divider style="margin: 10px 0;"></el-divider>
-                    <p><b>场景综合结果:</b> 
-                      <span v-if="group.logs.some(l => l.raw_payload?.result === 'occupied')" style="color: #67C23A; font-weight: bold;">有人 (Occupied)</span>
-                      <span v-else style="color: #909399; font-weight: bold;">无人 (Empty)</span>
+                    <p><b>{{ $t('logs.areaSummaryResult') }}</b> 
+                      <span v-if="group.logs.some(l => l.raw_payload?.result === 'occupied')" style="color: #67C23A; font-weight: bold;">{{ $t('logs.areaOccupied') }}</span>
+                      <span v-else style="color: #909399; font-weight: bold;">{{ $t('logs.areaEmpty') }}</span>
                     </p>
                   </div>
                 </el-popover>
@@ -212,7 +212,7 @@
             </div>
 
             <div style="margin-top: 15px; font-size: 13px; font-weight: bold; color: #303133; margin-bottom: 10px;">
-              现场抓拍与复核证据 (同频对比):
+              {{ $t('logs.evidenceTitle') }}
             </div>
             
             <!-- 多摄像头左右排列 -->
@@ -232,13 +232,13 @@
                     class="log-image"
                   />
                   <div class="evidence-chain" style="margin-top: 10px; font-size: 12px; color: #606266; background: #f5f7fa; padding: 8px; border-radius: 4px; min-height: 80px;">
-                    <b style="color: #303133;">判断证据链:</b>
+                    <b style="color: #303133;">{{ $t('logs.evidenceChainTitle') }}</b>
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
-                      <li v-for="(step, idx) in (log.raw_payload?.decision_chain || ['直接采信无日志'])" :key="idx" style="margin-bottom: 3px;">
+                      <li v-for="(step, idx) in (log.raw_payload?.decision_chain || [$t('logs.noLogChain')])" :key="idx" style="margin-bottom: 3px;">
                         <span v-if="step.includes('Gemma 复核')">
                           {{ step }}
                           <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
-                            [手动复核]
+                            [{{ $t('logs.manualReviewButton') }}]
                           </el-link>
                         </span>
                         <span v-else>{{ step }}</span>
@@ -254,12 +254,12 @@
     </el-dialog>
 
     <!-- 算法验证单图测试弹窗 -->
-    <el-dialog v-model="dialogTestVisible" title="算法单图验证 (Inference Test)" width="800px" destroy-on-close>
+    <el-dialog v-model="dialogTestVisible" :title="$t('logs.testDialogTitle')" width="800px" destroy-on-close>
       <div class="test-container">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-form :model="testForm" label-position="top">
-              <el-form-item label="上传测试图片">
+              <el-form-item :label="$t('logs.uploadTestImage')">
                 <el-upload
                   class="test-uploader"
                   action="#"
@@ -271,19 +271,19 @@
                   <img v-if="testForm.imageUrl" :src="testForm.imageUrl" class="test-preview-img" />
                   <div v-else class="test-uploader-placeholder">
                     <el-icon class="test-uploader-icon"><Plus /></el-icon>
-                    <span>点击上传图片</span>
+                    <span>{{ $t('logs.clickToUpload') }}</span>
                   </div>
                 </el-upload>
               </el-form-item>
               
-              <el-form-item label="置信度阈值 (Conf Thres)">
+              <el-form-item :label="$t('logs.confThres')">
                 <el-slider v-model="testForm.conf_thres" :min="0.01" :max="0.99" :step="0.01" show-input />
-                <div class="form-tip">数值越低越容易检出，但误报可能增加</div>
+                <div class="form-tip">{{ $t('logs.confThresTip') }}</div>
               </el-form-item>
 
               <el-form-item>
                 <el-button type="primary" @click="submitTest" :loading="testing" :disabled="!testForm.imageBase64" style="width: 100%">
-                  开始推理验证
+                  {{ $t('logs.startTestInference') }}
                 </el-button>
               </el-form-item>
             </el-form>
@@ -295,7 +295,7 @@
                 <el-skeleton :rows="8" animated />
               </div>
               <div v-else-if="testResult" class="test-result-content">
-                <div class="result-title">推理可视化 (Annotated Result)</div>
+                <div class="result-title">{{ $t('logs.testVisualTitle') }}</div>
                 <el-image 
                   :src="testResult.annotated_image" 
                   :preview-src-list="[testResult.annotated_image]"
@@ -304,19 +304,19 @@
                 />
                 
                 <div class="result-stats">
-                  <el-tag size="small" type="info">检测器: {{ testResult.detector_source }}</el-tag>
-                  <el-tag size="small" type="success" style="margin-left: 10px;">检出目标: {{ testResult.results.length }} 个</el-tag>
+                  <el-tag size="small" type="info">{{ $t('logs.testDetector') }} {{ testResult.detector_source }}</el-tag>
+                  <el-tag size="small" type="success" style="margin-left: 10px;">{{ $t('logs.testDetectedTargets', { count: testResult.results.length }) }}</el-tag>
                 </div>
 
                 <div class="result-list" style="margin-top: 15px;">
                   <el-table :data="testResult.results" size="small" border height="150">
-                    <el-table-column prop="class_name" label="类别" width="100" />
-                    <el-table-column prop="conf" label="置信度" width="100">
+                    <el-table-column prop="class_name" :label="$t('logs.testTableClass')" width="100" />
+                    <el-table-column prop="conf" :label="$t('logs.testTableConf')" width="100">
                       <template #default="scope">
                         {{ (scope.row.conf * 100).toFixed(1) }}%
                       </template>
                     </el-table-column>
-                    <el-table-column label="坐标 (BBox)">
+                    <el-table-column :label="$t('logs.testTableBbox')">
                       <template #default="scope">
                         {{ scope.row.bbox.join(', ') }}
                       </template>
@@ -324,7 +324,7 @@
                   </el-table>
                 </div>
               </div>
-              <el-empty v-else description="等待上传图片并点击开始推理"></el-empty>
+              <el-empty v-else :description="$t('logs.testWaitingTip')"></el-empty>
             </div>
           </el-col>
         </el-row>
@@ -335,7 +335,10 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import axios from 'axios'
+
+const { t } = useI18n()
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Calendar, VideoCamera, Plus, Picture, Search, Document } from '@element-plus/icons-vue'
 import { marked } from 'marked'
@@ -417,7 +420,7 @@ const submitTest = async () => {
     })
     testResult.value = res.data
   } catch (e) {
-    ElMessage.error(e.response?.data?.error || '测试请求失败')
+    ElMessage.error(e.response?.data?.error || t('logs.testRequestFailed'))
   } finally {
     testing.value = false
   }
@@ -432,7 +435,7 @@ const handleManualGemmaReview = async (log) => {
   manualReviewing.value = log.id
   const loadingInstance = ElLoading.service({
     lock: true,
-    text: 'Gemma 正在进行实时复核推理...',
+    text: t('logs.manualReviewingLoading'),
     background: 'rgba(0, 0, 0, 0.7)',
   })
 
@@ -464,21 +467,21 @@ const handleManualGemmaReview = async (log) => {
     
     ElMessageBox.alert(
       `<div style="font-size: 14px;">
-        <p><b>复核结果:</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
-        <p style="margin-top: 10px;"><b>Gemma 思维链 (Reasoning):</b></p>
+        <p><b>${t('logs.manualReviewResultTitle')}</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
+        <p style="margin-top: 10px;"><b>${t('logs.manualReviewReasoningTitle')}</b></p>
         <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266; max-height: 200px; overflow-y: auto;">
-          ${reasoning || '无'}
+          ${reasoning || t('logs.none')}
         </div>
       </div>`,
-      '手动实时复核结果 (Gemma 4 E2B)',
+      t('logs.manualReviewDialogTitle'),
       {
         dangerouslyUseHTMLString: true,
-        confirmButtonText: '关闭',
+        confirmButtonText: t('logs.close'),
         width: '500px'
       }
     )
   } catch (e) {
-    ElMessage.error('手动复核失败: ' + (e.response?.data?.error || e.message))
+    ElMessage.error(t('logs.manualReviewFailed') + (e.response?.data?.error || e.message))
   } finally {
     manualReviewing.value = ''
     loadingInstance.close()
@@ -487,13 +490,12 @@ const handleManualGemmaReview = async (log) => {
 
 const toggleAutoRefresh = (val) => {
   if (val) {
-    refreshInterval = setInterval(() => {
-      fetchLogs(true)
-    }, 60000) // 每分钟刷新
-    ElMessage.success('已开启自动刷新 (1分钟)')
+    ElMessage.success(t('logs.autoRefreshStarted'))
+    fetchLogs(true)
+    refreshInterval = setInterval(() => fetchLogs(true), 60000)
   } else {
     if (refreshInterval) clearInterval(refreshInterval)
-    ElMessage.info('已关闭自动刷新')
+    ElMessage.info(t('logs.autoRefreshStopped'))
   }
 }
 
@@ -530,7 +532,7 @@ const fetchLogs = async (silent = false) => {
       fetchSummary(date)
     })
   } catch (e) {
-    if (!silent) ElMessage.error('获取日志失败')
+    if (!silent) ElMessage.error(t('logs.fetchLogsFailed'))
   }
   if (!silent) loading.value = false
 }
@@ -636,10 +638,10 @@ const getCellIntensityClass = (dayData, hour, minuteIdx) => {
 const getTooltip = (dayData, hour, minuteIdx) => {
   const logs = getCellLogs(dayData, hour, minuteIdx)
   const timeStr = `${hour.toString().padStart(2, '0')}:${(minuteIdx * 10).toString().padStart(2, '0')} - ${hour.toString().padStart(2, '0')}:${(minuteIdx * 10 + 9).toString().padStart(2, '0')}`
-  if (logs.length === 0) return `${timeStr} (无检测记录)`
+  if (logs.length === 0) return `${timeStr} ${t('logs.noDetectionRecord')}`
   
   const occupiedLogs = logs.filter(l => l.raw_payload?.result === 'occupied')
-  return `${timeStr} | 有人: ${occupiedLogs.length}次, 总记录: ${logs.length}次`
+  return `${timeStr} | ${t('logs.statusOccupied')}: ${occupiedLogs.length}次, ${t('logs.summaryTotalSamples')}: ${logs.length}次`
 }
 
 // 提取并聚合多摄像头的按分钟日志
@@ -667,7 +669,7 @@ const getGroupResultTagType = (group) => {
 
 const formatGroupResult = (group) => {
   const isOccupied = group.logs.some(l => l.raw_payload?.result === 'occupied')
-  return isOccupied ? '区域有人 (Occupied)' : '区域无人 (Empty)'
+  return isOccupied ? t('logs.areaOccupied') : t('logs.areaEmpty')
 }
 
 const openDetail = (dayData, hour, minuteIdx) => {
@@ -675,7 +677,7 @@ const openDetail = (dayData, hour, minuteIdx) => {
   if (logs.length === 0) return
   
   const timeStr = `${hour.toString().padStart(2, '0')}:${(minuteIdx * 10).toString().padStart(2, '0')} - ${hour.toString().padStart(2, '0')}:${(minuteIdx * 10 + 9).toString().padStart(2, '0')}`
-  dialogTitle.value = `[${selectedArea.value}] ${dayData.date} ${timeStr} 详情记录`
+  dialogTitle.value = `[${selectedArea.value}] ${dayData.date} ${timeStr} ${t('logs.detailRecordTitle')}`
   dialogLogs.value = [...logs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
   dialogVisible.value = true
 }
@@ -698,10 +700,10 @@ const getResultTagType = (log) => {
 }
 
 const formatResult = (log) => {
-  if (log.event === 'Smoking Alert') return '确认吸烟 (Confirmed)'
-  if (log.raw_payload?.result === 'occupied') return '区域有人 (Occupied)'
-  if (log.raw_payload?.result === 'empty') return '区域无人 (Empty)'
-  return '未知 (Unknown)'
+  if (log.event === 'Smoking Alert') return t('logs.smokingConfirmed')
+  if (log.raw_payload?.result === 'occupied') return t('logs.areaOccupied')
+  if (log.raw_payload?.result === 'empty') return t('logs.areaEmpty')
+  return t('logs.unknown')
 }
 
 const getImageUrl = (relativePath) => {
