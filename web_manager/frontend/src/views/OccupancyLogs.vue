@@ -79,8 +79,13 @@
             </div>
             <div class="heatmap-container">
               <!-- Y-axis (Minutes): 50m at top, 0m at bottom -->
-              <div class="y-axis">
-                <div class="y-label" v-for="m in 6" :key="m">{{ (6 - m) * 10 }}m</div>
+              <div class="y-axis-wrapper">
+                <div class="y-axis">
+                  <div class="y-label" v-for="m in 6" :key="m">
+                    <span>{{ (6 - m) * 10 }}m</span>
+                  </div>
+                </div>
+                <div class="x-axis-placeholder"></div>
               </div>
               
               <!-- Grid -->
@@ -230,7 +235,7 @@
                     <b style="color: #303133;">判断证据链:</b>
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
                       <li v-for="(step, idx) in (log.raw_payload?.decision_chain || ['直接采信无日志'])" :key="idx" style="margin-bottom: 3px;">
-                        <span v-if="step.includes('Gemma')">
+                        <span v-if="step.includes('Gemma 复核')">
                           {{ step }}
                           <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
                             [手动复核]
@@ -831,20 +836,41 @@ onMounted(() => {
   align-items: flex-start;
   width: 100%;
 }
+.y-axis-wrapper {
+  display: flex;
+  flex-direction: column;
+  margin-right: 15px;
+  width: 30px;
+}
 .y-axis {
   display: flex;
   flex-direction: column;
-  justify-content: space-around;
-  height: 114px;
-  margin-right: 15px;
-  padding-bottom: 20px;
+  justify-content: space-between;
+  gap: 4px; /* Matches grid gap */
 }
 .y-label {
-  font-size: 12px;
+  font-size: 10px;
   color: #909399;
-  line-height: 15px;
+  line-height: 1;
   text-align: right;
-  width: 30px;
+  /* Make label height match cell height proportionally */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  /* Use aspect-ratio to match square cells if needed, 
+     but since they are in flex-column, we just need them to share the space */
+  flex: 1;
+  padding-bottom: 100%; /* Force labels to have same aspect ratio as cells */
+  position: relative;
+}
+.y-label span {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 0;
+}
+.x-axis-placeholder {
+  height: 21px; /* Matches x-axis height + margin */
 }
 .grid-content {
   display: flex;
@@ -855,6 +881,7 @@ onMounted(() => {
   display: flex;
   gap: 4px;
   justify-content: space-between;
+  width: 100%;
 }
 .column {
   display: flex;
@@ -877,18 +904,18 @@ onMounted(() => {
 }
 .x-axis {
   display: flex;
-  gap: 4px;
+  justify-content: space-between;
+  width: 100%;
   margin-top: 10px;
 }
 .x-label {
-  width: 15px;
-  font-size: 11px;
+  flex: 1;
+  font-size: 10px;
   color: #909399;
-  text-align: left;
-  overflow: visible;
+  text-align: center;
   white-space: nowrap;
 }
-.x-label:nth-child(odd) {
+.x-label:nth-child(even) {
   opacity: 0;
 }
 
