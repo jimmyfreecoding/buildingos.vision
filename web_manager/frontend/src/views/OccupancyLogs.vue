@@ -133,7 +133,7 @@
 
         <div class="summary-text-box">
           <div class="summary-label">Gemma 深度分析报告：</div>
-          <div class="summary-text">{{ selectedSummary.summary }}</div>
+          <div class="summary-markdown" v-html="renderMarkdown(selectedSummary.summary)"></div>
         </div>
 
         <div v-if="selectedSummary.stats.areas[selectedArea]?.lvl2_details?.length > 0" class="summary-details">
@@ -327,6 +327,7 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { Calendar, VideoCamera, Plus, Picture, Search, Document } from '@element-plus/icons-vue'
+import { marked } from 'marked'
 
 const loading = ref(false)
 const allLogs = ref([])
@@ -349,6 +350,11 @@ const openSummary = (date) => {
   selectedDate.value = date
   selectedSummary.value = summaries.value[date]
   summaryDialogVisible.value = true
+}
+
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  return marked(text)
 }
 
 const fetchSummary = async (date) => {
@@ -719,15 +725,35 @@ onMounted(() => {
 }
 .summary-label {
   font-weight: bold;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
   color: #303133;
-  font-size: 14px;
+  font-size: 15px;
 }
-.summary-text {
+.summary-markdown {
   line-height: 1.6;
   color: #606266;
-  white-space: pre-wrap;
-  font-size: 13px;
+  font-size: 14px;
+}
+.summary-markdown :deep(h1), 
+.summary-markdown :deep(h2), 
+.summary-markdown :deep(h3) {
+  margin-top: 15px;
+  margin-bottom: 10px;
+  color: #303133;
+}
+.summary-markdown :deep(ul), 
+.summary-markdown :deep(ol) {
+  padding-left: 20px;
+  margin-bottom: 10px;
+}
+.summary-markdown :deep(li) {
+  margin-bottom: 5px;
+}
+.summary-markdown :deep(p) {
+  margin-bottom: 10px;
+}
+.summary-markdown :deep(strong) {
+  color: #303133;
 }
 .summary-details {
   margin-top: 20px;

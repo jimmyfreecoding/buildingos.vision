@@ -12,8 +12,12 @@ from datetime import datetime, timedelta
 def get_real_path(p):
     if os.path.exists("/.dockerenv"):
         return p
-    home = os.path.expanduser("~")
-    project_root = os.path.join(home, "buildingos.vision")
+    
+    # 宿主机环境下，尝试找到项目根目录
+    # 假设脚本在 ai_engine/src 下
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    
     if p.startswith("/app/www"):
         return p.replace("/app/www", os.path.join(project_root, "zlm/www"))
     if p.startswith("/app/ai_engine/config"):
@@ -94,29 +98,31 @@ def generate_gemma_summary(aggregated_data):
     以下是办公区一天的 AI 检测深度统计数据：
     {json.dumps(aggregated_data, ensure_ascii=False, indent=2)}
     
-    请根据以上数据，生成一份每日办公区占用深度分析报告（中文）。
+    请根据以上数据，生成一份每日办公区占用深度分析报告（使用 Markdown 格式）。
     要求必须包含以下内容：
     1. 判定效率分析：提到多少次是一级 Detector 直接确认，多少次触发了二级 Gemma 复核。
     2. 复核准确性：在二级复核中，Gemma 确认了多少次“有人”，否决（排除误报）了多少次。
-    3. 时间分布：列出二级复核发生的具体时间点及其原因。
+    3. 区域活跃度详情：
+       - 针对每个区域，列出其“有人”的具体时间段（例如：09:15 - 10:30）。
+       - 总结该区域的总“有人时间”和“无人时间”。
     4. 整体结论：办公区今天的活跃程度和安全状态总结。
     
-    注意：语言专业、客观，不要输出思考过程，直接给出报告。
+    注意：使用专业的 Markdown 标题、列表和加粗。语言专业、客观，不要输出思考过程，直接给出报告。
     """
     
     payload = {
         "model": "buildingos_review_engine",
         "messages": [
-            {"role": "system", "content": "You are an AI data analyst. Summarize detection stats with focus on Level 1 vs Level 2 decision counts."},
+            {"role": "system", "content": "You are an AI data analyst. Summarize detection stats with focus on Level 1 vs Level 2 decision counts and detailed occupancy timelines for each area."},
             {"role": "user", "content": prompt}
         ],
         "chat_template_kwargs": {"enable_thinking": False},
         "temperature": 0.4, # 降低随机性
-        "max_tokens": 800
+        "max_tokens": 1500 # 增加长度以容纳时间段
     }
     
     try:
-        resp = requests.post(GEMMA_URL, json=payload, timeout=60)
+        resp = requests.post(GEMMA_URL, json=payload, timeout=90)
         if resp.status_code == 200:
             data = resp.json()
             msg = data.get('choices', [{}])[0].get('message', {})
@@ -125,6 +131,78 @@ def generate_gemma_summary(aggregated_data):
     except Exception as e:
         return f"Gemma 总结生成失败: {e}"
 
+def calculate_time_segments(logs):
+    """根据日志计算有人/无人的时间段和总时长"""
+    if not logs: return {"segments": [], "total_occupied_min": 0, "total_empty_min": 0}
+    
+    # 按时间排序
+    sorted_logs = sorted(logs, key=lambda x: x['timestamp'])
+    
+    segments = []
+    total_occupied_sec = 0
+    total_empty_sec = 0
+    
+    if not sorted_logs: return {"segments": [], "total_occupied_min": 0, "total_empty_min": 0}
+    
+    current_state = sorted_logs[0]['is_occupied']
+    first_log_time = sorted_logs[0]['timestamp']
+    if 'Z' in first_log_time:
+        start_time = datetime.fromisoformat(first_log_time.replace('Z', '+00:00'))
+    else:
+        start_time = datetime.fromisoformat(first_log_time)
+    
+    for i in range(1, len(sorted_logs)):
+        log = sorted_logs[i]
+        state = log['is_occupied']
+        log_time_str = log['timestamp']
+        if 'Z' in log_time_str:
+            time = datetime.fromisoformat(log_time_str.replace('Z', '+00:00'))
+        else:
+            time = datetime.fromisoformat(log_time_str)
+        
+        if state != current_state:
+            # 状态切换，结束当前段
+            duration = (time - start_time).total_seconds()
+            segments.append({
+                "state": "Occupied" if current_state else "Empty",
+                "start": start_time.strftime("%H:%M:%S"),
+                "end": time.strftime("%H:%M:%S"),
+                "duration_min": round(duration / 60, 1)
+            })
+            if current_state:
+                total_occupied_sec += duration
+            else:
+                total_empty_sec += duration
+            
+            # 开始新段
+            current_state = state
+            start_time = time
+            
+    # 闭合最后一段 (假设到最后一个日志时间)
+    last_log_time = sorted_logs[-1]['timestamp']
+    # 处理带 Z 或不带 Z 的 ISO 格式
+    if 'Z' in last_log_time:
+        last_time = datetime.fromisoformat(last_log_time.replace('Z', '+00:00'))
+    else:
+        last_time = datetime.fromisoformat(last_log_time)
+        
+    duration = (last_time - start_time).total_seconds()
+    if duration >= 0: # 即使是 0 也记录，代表最后的状态点
+        segments.append({
+            "state": "Occupied" if current_state else "Empty",
+            "start": start_time.strftime("%H:%M:%S"),
+            "end": last_time.strftime("%H:%M:%S"),
+            "duration_min": round(duration / 60, 1)
+        })
+        if current_state: total_occupied_sec += duration
+        else: total_empty_sec += duration
+
+    return {
+        "segments": segments,
+        "total_occupied_min": round(total_occupied_sec / 60, 1),
+        "total_empty_min": round(total_empty_sec / 60, 1)
+    }
+
 def process_day(target_date):
     """处理指定日期的所有日志"""
     day_dir = os.path.join(LOG_DIR_BASE, target_date)
@@ -132,7 +210,7 @@ def process_day(target_date):
         print(f"❌ 目录不存在: {day_dir}")
         return
 
-    print(f"📅 开始处理日期: {target_date} (WebP 50% 质量 + 深度统计模式)")
+    print(f"📅 开始处理日期: {target_date} (WebP 50% 质量 + 增强深度统计)")
     
     aggregated_data = {
         "date": target_date,
@@ -152,13 +230,15 @@ def process_day(target_date):
         if not os.path.isdir(area_path): continue
         
         print(f"  📂 处理区域: {area_name}")
+        area_logs_for_timeline = []
         area_stats = {
             "samples": 0, 
             "lvl1_count": 0, 
             "lvl2_count": 0,
             "lvl2_yes": 0,
             "lvl2_no": 0,
-            "lvl2_details": [] # 记录二级复核的时间和决策链
+            "lvl2_details": [],
+            "timeline": {} # 存放时间段统计
         }
         
         # 2. 转换图片
@@ -183,6 +263,13 @@ def process_day(target_date):
                         chain = raw.get("decision_chain", [])
                         chain_str = " ".join(chain)
                         
+                        # 记录用于时间线计算
+                        is_occupied = raw.get("result") == "occupied"
+                        area_logs_for_timeline.append({
+                            "timestamp": log.get("timestamp"),
+                            "is_occupied": is_occupied
+                        })
+                        
                         # 统计判定层级
                         if "直接确认有人" in chain_str:
                             area_stats["lvl1_count"] += 1
@@ -203,14 +290,16 @@ def process_day(target_date):
                 except:
                     pass
         
+        # 5. 计算时间段
+        area_stats["timeline"] = calculate_time_segments(area_logs_for_timeline)
         aggregated_data["areas"][area_name] = area_stats
 
-    # 5. 生成报告
-    print("  🧠 正在生成 Gemma 深度分析报告...")
+    # 6. 生成报告
+    print("  🧠 正在生成 Gemma 增强深度分析报告...")
     summary_text = generate_gemma_summary(aggregated_data)
     
     report = {
-        "version": "2.0",
+        "version": "3.0",
         "generated_at": datetime.now().isoformat(),
         "stats": aggregated_data,
         "summary": summary_text
