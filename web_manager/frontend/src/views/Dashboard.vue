@@ -6,7 +6,7 @@
         <el-card class="box-card system-card">
           <template #header>
             <div class="card-header">
-              <span><el-icon><Monitor /></el-icon> 边缘计算节点状态 ({{ sysInfo.board.model }})</span>
+              <span><el-icon><Monitor /></el-icon> {{ $t('dashboard.nodeStatus') }} ({{ sysInfo.board.model }})</span>
             </div>
           </template>
           <div v-loading="loadingSys" class="sys-content">
@@ -16,41 +16,37 @@
                 <el-progress type="dashboard" :percentage="sysInfo.cpu.usage" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">CPU 负载</span>
+                    <span class="percentage-label">{{ $t('dashboard.cpuLoad') }}</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">{{ sysInfo.cpu.cores }} Cores</div>
-                <div class="metric-note">持续高于 85% 可能导致推理排队</div>
               </el-col>
               <el-col :span="6" class="metric-item">
                 <el-progress type="dashboard" :percentage="sysInfo.memory.ram.usagePercent" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">统一内存</span>
+                    <span class="percentage-label">{{ $t('dashboard.unifiedMem') }}</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">{{ formatBytes(sysInfo.memory.ram.used) }} / {{ formatBytes(sysInfo.memory.ram.total) }}</div>
-                <div class="metric-note">统一内存过高会压缩 GPU 可用空间</div>
               </el-col>
               <el-col :span="6" class="metric-item">
                 <el-progress type="dashboard" :percentage="sysInfo.memory.swap.usagePercent" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">Swap (虚拟)</span>
+                    <span class="percentage-label">{{ $t('dashboard.swap') }}</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">{{ formatBytes(sysInfo.memory.swap.used) }} / {{ formatBytes(sysInfo.memory.swap.total) }}</div>
-                <div class="metric-note">持续增长说明内存紧张，易触发抖动</div>
               </el-col>
               <el-col :span="6" class="metric-item">
                 <el-progress type="dashboard" :percentage="sysInfo.gpu.util" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">GPU (计算负载)</span>
+                    <span class="percentage-label">{{ $t('dashboard.gpuLoad') }}</span>
                   </template>
                 </el-progress>
                 <div class="metric-desc">Mem: {{ sysInfo.gpu.memUsed.toFixed(0) }}MB / {{ sysInfo.gpu.memTotal.toFixed(0) }}MB</div>
-                <div class="metric-note">0% 常见于空闲时段；高利用率 + 频率下降通常是热/功耗限制</div>
               </el-col>
             </el-row>
             
@@ -58,20 +54,20 @@
             
             <!-- Second Row: Hardware Vitals (Power, Temp) -->
             <el-descriptions :column="2" border size="small">
-              <el-descriptions-item label="Power (整机功耗)">
+              <el-descriptions-item :label="$t('dashboard.power')">
                 <el-tag size="small" type="warning" effect="plain">{{ (sysInfo.power.total / 1000).toFixed(1) }} W</el-tag>
                 <span style="font-size: 12px; color: #909399; margin-left: 5px;">(CPU+GPU+CV: {{ (powerComputeRail / 1000).toFixed(1) }} W)</span>
               </el-descriptions-item>
-              <el-descriptions-item label="Temperatures">
+              <el-descriptions-item :label="$t('dashboard.temp')">
                 <span style="font-size: 12px;">
                   GPU: <span :style="{ color: gpuTemp > 75 ? 'red' : 'inherit' }">{{ gpuTemp || 'N/A' }}°C</span> | 
                   CPU: <span :style="{ color: cpuTemp > 75 ? 'red' : 'inherit' }">{{ cpuTemp || 'N/A' }}°C</span>
                 </span>
               </el-descriptions-item>
-              <el-descriptions-item label="NVPModel">
+              <el-descriptions-item :label="$t('dashboard.nvpModel')">
                 <el-tag size="small" type="success">{{ sysInfo.board.nvpmodel }}</el-tag>
               </el-descriptions-item>
-              <el-descriptions-item label="Uptime">{{ formatUptime(sysInfo.board.uptime) }}</el-descriptions-item>
+              <el-descriptions-item :label="$t('dashboard.uptime')">{{ formatUptime(sysInfo.board.uptime) }}</el-descriptions-item>
             </el-descriptions>
 
             <el-divider style="margin: 10px 0;" />
@@ -87,7 +83,7 @@
             />
 
             <el-card shadow="never" class="engine-panel">
-              <div class="engine-header">硬件引擎占用面板</div>
+              <div class="engine-header">{{ $t('dashboard.enginePanel') }}</div>
               <div class="engine-tags">
                 <el-tag
                   v-for="engine in engineEntries"

@@ -1,0 +1,37 @@
+{
+  "menu": {
+    "dashboard": "Dashboard",
+    "aiMonitor": "AI Monitor",
+    "cameras": "Cameras Config",
+    "aiParams": "AI Params",
+    "occupancyLogs": "Detection Logs",
+    "network": "Network Settings",
+    "localModel": "Local Inference",
+    "reboot": "Reboot Device"
+  },
+  "header": {
+    "title": "AI Vision Edge",
+    "logout": "Logout"
+  },
+  "dashboard": {
+    "nodeStatus": "Edge Node Status",
+    "cpuLoad": "CPU Load",
+    "unifiedMem": "Unified Memory",
+    "swap": "Swap",
+    "gpuLoad": "GPU Load",
+    "power": "Total Power",
+    "temp": "Temperature",
+    "nvpModel": "NVP Model",
+    "uptime": "Uptime",
+    "enginePanel": "Hardware Engine Panel",
+    "gemmaStatus": "Local LLM Status",
+    "zlmStatus": "Media Engine Status",
+    "aiTasks": "AI Engine Task Status"
+  },
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "warning": "Warning",
+    "rebootConfirm": "Device will reboot. Video streams and AI analysis will be temporarily interrupted. Continue?"
+  }
+}

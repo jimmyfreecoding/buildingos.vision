@@ -1,0 +1,37 @@
+{
+  "menu": {
+    "dashboard": "系统概览",
+    "aiMonitor": "AI 实时监控",
+    "cameras": "场景摄像头配置",
+    "aiParams": "AI 算法参数",
+    "occupancyLogs": "场景检测结果",
+    "network": "网络设置",
+    "localModel": "本地模型推理",
+    "reboot": "重启设备"
+  },
+  "header": {
+    "title": "AI视觉边缘",
+    "logout": "退出登录"
+  },
+  "dashboard": {
+    "nodeStatus": "边缘计算节点状态",
+    "cpuLoad": "CPU 负载",
+    "unifiedMem": "统一内存",
+    "swap": "Swap (虚拟)",
+    "gpuLoad": "GPU (计算负载)",
+    "power": "整机功耗",
+    "temp": "温度",
+    "nvpModel": "性能模式",
+    "uptime": "在线时长",
+    "enginePanel": "硬件引擎占用面板",
+    "gemmaStatus": "本地大模型状态",
+    "zlmStatus": "流媒体引擎状态",
+    "aiTasks": "AI 算法引擎任务状态"
+  },
+  "common": {
+    "confirm": "确认",
+    "cancel": "取消",
+    "warning": "警告",
+    "rebootConfirm": "设备即将重启，视频流和 AI 分析将暂时中断，是否继续？"
+  }
+}

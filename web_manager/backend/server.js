@@ -100,7 +100,24 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- 1. 系统状态与重启 API ---
+// --- 1. 系统状态与登录 API ---
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : {};
+        const auth = config.auth || { admin: 'admin', password: 'admin' };
+        
+        if (username === auth.admin && password === auth.password) {
+            // Simple mock token
+            res.json({ status: 'ok', token: 'buildingos_token_2026', username: auth.admin });
+        } else {
+            res.status(401).json({ status: 'error', message: 'Invalid username or password' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/ping', (req, res) => {
     res.json({ status: 'ok', message: 'System is running' });
 });

@@ -13,6 +13,10 @@
         "base_url": "http://localhost:10081/captures",
         "video_duration": 5
     },
+    "auth": {
+        "admin": "admin",
+        "password": "admin"
+    },
     "storage_quota": {
         "occupancy_log_dir": "/app/www/occupancy_logs",
         "max_size_mb": 1024
