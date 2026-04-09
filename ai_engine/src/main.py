@@ -439,9 +439,6 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
         print(f"[{cam_id}] MQTT 发送失败: {e}")
 
 # --- Camera Processing Thread (每 60s/20s 抓拍) ---
-# 增加一个全局锁防止多个摄像头并发调用 cv2.VideoCapture() 导致 GStreamer 崩溃
-cv2_open_lock = threading.Lock()
-
 import subprocess
 import random
 
