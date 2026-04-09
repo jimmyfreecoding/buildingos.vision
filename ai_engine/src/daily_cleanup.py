@@ -34,6 +34,7 @@ except:
 
 LOG_DIR_BASE = get_real_path(config.get("storage_quota", {}).get("occupancy_log_dir", "/app/www/occupancy_logs"))
 GEMMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
+GEMMA_SLOTS_URL = "http://127.0.0.1:8080/slots/0"
 
 def convert_to_webp(img_path, max_width=800, quality=50):
     """转换为 WebP 格式并压缩 (增加安全检查和重复压缩检查)"""
@@ -309,6 +310,13 @@ def process_day(target_date):
         json.dump(report, f, ensure_ascii=False, indent=2)
     
     print(f"✅ 处理完成！日报内容：\n\n{summary_text}")
+
+    # 7. 主动释放 Gemma 内存
+    try:
+        print("  🧹 正在释放 Gemma 插槽内存...")
+        requests.delete(GEMMA_SLOTS_URL, timeout=5.0)
+    except:
+        pass
 
 if __name__ == "__main__":
     # 默认处理今天，或者通过参数指定日期 YYYY-MM-DD
