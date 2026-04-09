@@ -786,10 +786,10 @@ onMounted(() => {
 /* GitHub Light Theme Heatmap Colors */
 .color-level-null { background-color: #ebedf0; } /* 根本没日志（未来时间，断网等） */
 .color-level-0 { background-color: #d1d5da; }    /* 有判断日志，但是判定为无人 */
-.color-level-1 { background-color: #9be9a8; }
-.color-level-2 { background-color: #40c463; }
-.color-level-3 { background-color: #30a14e; }
-.color-level-4 { background-color: #216e39; }
+.color-level-1 { background-color: #d9ecff; }
+.color-level-2 { background-color: #a0cfff; }
+.color-level-3 { background-color: #409eff; }
+.color-level-4 { background-color: #005cb3; }
 
 .heatmaps-wrapper {
   display: flex;
