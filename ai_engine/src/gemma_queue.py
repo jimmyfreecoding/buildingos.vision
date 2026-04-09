@@ -85,6 +85,30 @@ class GemmaReviewQueue:
 
     def _call_gemma_api(self, jpg_bytes, prompt):
         """实际发起 HTTP 请求到本地 llama.cpp 部署的 Gemma 服务"""
+        # --- 调试增强：保存现场以供复现 ---
+        # 获取 debug 目录 (ai_engine/gemma_debug)
+        debug_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gemma_debug"))
+        if not os.path.exists(debug_dir):
+            try:
+                os.makedirs(debug_dir, exist_ok=True)
+            except:
+                debug_dir = "/tmp/gemma_debug"
+                if not os.path.exists(debug_dir):
+                    os.makedirs(debug_dir, exist_ok=True)
+        
+        # 使用毫秒级时间戳，防止极速请求时文件名冲突
+        timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time()*1000)%1000:03d}"
+        img_filename = f"gemma_{timestamp}.jpg"
+        img_path = os.path.join(debug_dir, img_filename)
+        sh_path = os.path.join(debug_dir, f"gemma_{timestamp}.sh")
+        
+        # 1. 保存原始图片
+        try:
+            with open(img_path, "wb") as f:
+                f.write(jpg_bytes)
+        except Exception as e:
+            print(f"⚠️ 无法保存调试图片: {e}")
+
         try:
             # 1. 强制在请求前物理清理 Slot 缓存，防止模型受上一帧干扰
             try:
@@ -120,6 +144,54 @@ class GemmaReviewQueue:
                 "stop": ["<end_of_turn>", "user", "model", "Answer:"] 
             }
             
+            # --- 调试增强：生成并保存 curl 脚本 ---
+            import json
+            # 构造用于脚本的 Payload (Base64 占位符以减小脚本体积)
+            payload_for_sh = payload.copy()
+            payload_for_sh["image_data"] = [{"id": 1, "data": "BASE64_PLACEHOLDER"}]
+            
+            # 构造可在 Linux 宿主机直接运行的脚本
+            sh_content = f"""#!/bin/bash
+# Gemma 复核手动复现脚本 (由 AI-Engine 自动生成)
+# 时间: {timestamp}
+# 提示词: {prompt}
+
+# 获取当前脚本所在目录
+DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
+IMG_FILE="$DIR/{img_filename}"
+GEMMA_URL="{self.gemma_url.replace('host.docker.internal', '127.0.0.1')}"
+
+echo "🚀 正在使用本地图片重新发起 Gemma 复核..."
+echo "📸 图片: $IMG_FILE"
+echo "❓ 提示词: {prompt}"
+
+# 转换图片为 Base64
+IMG_B64=$(base64 -w 0 "$IMG_FILE")
+
+# 构建完整的 JSON 并请求 (使用 Python 构建 JSON 以防 shell 换行转义问题)
+python3 -c "
+import json, requests, os, base64
+
+img_b64 = '$IMG_B64'
+payload = {json.dumps(payload_for_sh, ensure_ascii=False)}
+payload['image_data'][0]['data'] = img_b64
+
+try:
+    resp = requests.post('$GEMMA_URL', json=payload, timeout=15.0)
+    print(f'\\n[Response Status] {{resp.status_code}}')
+    print(f'[Response Body] {{resp.text}}')
+except Exception as e:
+    print(f'\\n[Error] {{e}}')
+"
+"""
+            try:
+                with open(sh_path, "w", encoding="utf-8") as f:
+                    f.write(sh_content)
+                # print(f"DEBUG: 生成复测脚本: {sh_path}")
+            except Exception as e:
+                print(f"⚠️ 无法保存调试脚本: {e}")
+            # -----------------------------------
+
             # 5. 发起请求
             resp = requests.post(self.gemma_url, json=payload, timeout=10.0)
             
@@ -144,7 +216,9 @@ class GemmaReviewQueue:
                 # 去除前缀标点
                 cleaned = cleaned.lstrip(":： ").strip()
                 
-                print(f"DEBUG: Gemma cleaned response: '{cleaned}'")
+                print(f"DEBUG: Gemma cleaned response: '{cleaned}' (Timestamp: {timestamp})")
+                print(f"DEBUG: 现场已保存至: {img_path}")
+                print(f"DEBUG: 手动复测脚本: {sh_path}")
                 
                 # 最终决策：寻找关键词
                 if "YES" in cleaned or "是的" in cleaned or "确认" in cleaned:
