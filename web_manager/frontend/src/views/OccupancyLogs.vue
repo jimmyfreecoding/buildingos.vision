@@ -440,11 +440,7 @@ const handleManualGemmaReview = async (log) => {
     const imageBase64 = await base64Promise
 
     // 3. 调用后端复核接口
-    const prompt = (
-      "图中是否有真实的、活着的人（包括坐着、站着、走路或正在操作电脑的人）？\n"
-      "注意：请排除雕像、海报、假人、反光、影子或深夜空无一人的场景。\n"
-      "如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
-    )
+    const prompt = "图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
     
     const res = await axios.post('/api/gemma/infer', {
       image: imageBase64,
