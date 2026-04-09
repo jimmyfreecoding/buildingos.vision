@@ -337,12 +337,12 @@ sudo systemctl stop jtop-daemon llama-gemma && \
 sudo systemctl status jtop-daemon llama-gemma --no-pager
 ```
 
-**辅助服务安装/重置：**
+**辅助服务安装/重置（含开机自启）：**
 ```bash
 # 复制服务文件
 sudo cp ~/buildingos.vision/deploy/jtop-daemon.service /etc/systemd/system/ && \
 sudo cp ~/buildingos.vision/deploy/llama-gemma.service /etc/systemd/system/ && \
-# 重新加载并启用
+# 重新加载并设置开机自启
 sudo systemctl daemon-reload && \
 sudo systemctl enable jtop-daemon llama-gemma && \
 sudo systemctl restart jtop-daemon llama-gemma

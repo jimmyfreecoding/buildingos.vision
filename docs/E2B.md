@@ -987,16 +987,9 @@ WantedBy=multi-user.target
 #### 17.3.3 启用、启动、查看
 
 ```bash
-# 重新加载 systemd 配置
 sudo systemctl daemon-reload
-
-# 开机自启
 sudo systemctl enable jtop-daemon.service
-
-# 立刻启动
 sudo systemctl start jtop-daemon.service
-
-# 查看状态
 sudo systemctl status jtop-daemon.service
 
 # 实时日志
