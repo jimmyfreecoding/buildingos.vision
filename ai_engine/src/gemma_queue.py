@@ -35,13 +35,18 @@ class GemmaReviewQueue:
         if os.path.exists("/.dockerenv"):
             default_gemma_host = "host.docker.internal"
             
-        self.gemma_url = config.get("gemma_api_url", f"http://{default_gemma_host}:8080/completion")
-        self.gemma_slots_url = self.gemma_url.replace("/completion", "/slots/0")
+        # 获取基础 URL 并统一到 OpenAI 兼容的 v1/chat/completions 接口
+        raw_api_url = config.get("gemma_api_url", f"http://{default_gemma_host}:8080/completion")
+        self.base_url = raw_api_url.split("/completion")[0].split("/v1")[0].rstrip("/")
+        
+        self.gemma_url = f"{self.base_url}/v1/chat/completions"
+        self.gemma_slots_url = f"{self.base_url}/slots/0"
         
         # 强制检查：如果在宿主机运行但配置里写了 host.docker.internal，则修正它
-        if not os.path.exists("/.dockerenv") and "host.docker.internal" in self.gemma_url:
-            self.gemma_url = self.gemma_url.replace("host.docker.internal", "127.0.0.1")
-            self.gemma_slots_url = self.gemma_slots_url.replace("host.docker.internal", "127.0.0.1")
+        if not os.path.exists("/.dockerenv") and "host.docker.internal" in self.base_url:
+            self.base_url = self.base_url.replace("host.docker.internal", "127.0.0.1")
+            self.gemma_url = f"{self.base_url}/v1/chat/completions"
+            self.gemma_slots_url = f"{self.base_url}/slots/0"
         
         # 优先级队列 (PriorityQueue)，优先级数字越小越先执行
         self.task_queue = queue.PriorityQueue(maxsize=10) # 限制最大积压10个任务，超出的直接降级丢弃
@@ -116,93 +121,115 @@ class GemmaReviewQueue:
             except:
                 pass
                 
-            # 2. 图像转 Base64
+            # 2. 图像转 Base64 (带 OpenAI 协议前缀)
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
+            img_url = f"data:image/jpeg;base64,{img_b64}"
             
-            # 3. 极简指令：采用 Completion 引导模式，强制关闭推理
-            # 这种格式在 llama.cpp 中比 Chat 格式更能逼迫模型直接给出答案
-            引导式提示词 = (
-                f"<start_of_turn>user\n"
-                f"Image: [img-1]\n"
-                f"Instruction: {prompt}\n"
-                f"Constraint: Answer ONLY 'YES' or 'NO'. No reasoning. No explanations.\n"
-                f"<end_of_turn>\n"
-                f"<start_of_turn>model\n"
-                f"Answer: "
-            )
+            # 3. 构造 OpenAI 兼容的消息体
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": img_url}},
+                        {"type": "text", "text": f"{prompt}\nConstraint: Answer ONLY 'YES' or 'NO'. No reasoning. No explanations."}
+                    ]
+                }
+            ]
             
-            # 4. 组装请求体：极致精简参数以关闭推理模式并提速
+            # 4. 组装请求体 (使用 v1/chat/completions 接口)
             payload = {
-                "prompt": 引导式提示词,
-                "image_data": [{"id": 1, "data": img_b64}],
-                "temperature": 0.0,   # 绝对确定性
-                "n_predict": 5,       # 极短生成
+                "model": "buildingos_review_engine",
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 16,
                 "stream": False,
-                "cache_prompt": False,
-                "echo": False,        # 关键：禁止回显 Prompt
-                "include_reasoning": False,  # 【核心修改】显式关闭推理/思维链模式
-                "stop": ["<end_of_turn>", "user", "model", "Answer:"] 
+                "stop": ["<end_of_turn>", "<eos>", "model\n"]
             }
             
-            # --- 调试增强：生成并保存 curl 脚本 ---
+            # --- 调试增强：生成并保存复测脚本 ---
             import json
-            # 构造用于脚本的 Payload (Base64 占位符以减小脚本体积)
+            # 构造用于脚本的 Payload (不带巨大的 Base64)
             payload_for_sh = payload.copy()
-            payload_for_sh["image_data"] = [{"id": 1, "data": "BASE64_PLACEHOLDER"}]
+            payload_for_sh["messages"] = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "IMAGE_URL_PLACEHOLDER"}},
+                        {"type": "text", "text": payload["messages"][0]["content"][1]["text"]}
+                    ]
+                }
+            ]
             
-            # 构造可在 Linux 宿主机直接运行的脚本
+            payload_json_safe = json.dumps(payload_for_sh, ensure_ascii=False).replace("'", "'\\''")
+            
             sh_content = f"""#!/bin/bash
-# Gemma 复核手动复现脚本 (由 AI-Engine 自动生成)
+# Gemma 复核手动复现脚本 (由 AI-Engine 自动生成 - OpenAI 协议版)
 # 时间: {timestamp}
 # 提示词: {prompt}
 
 # 获取当前脚本所在目录
 DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
 IMG_FILE="$DIR/{img_filename}"
-GEMMA_URL="{self.gemma_url.replace('host.docker.internal', '127.0.0.1')}"
+GEMMA_URL="{self.gemma_url}"
 
-echo "🚀 正在使用本地图片重新发起 Gemma 复核..."
+echo "🚀 正在使用本地图片重新发起 Gemma 复核 (OpenAI 协议)..."
 echo "📸 图片: $IMG_FILE"
 echo "❓ 提示词: {prompt}"
 
-# 转换图片为 Base64
-IMG_B64=$(base64 -w 0 "$IMG_FILE")
+# 使用 heredoc 传递 Python 代码，彻底避免 shell 参数过长限制
+python3 - << 'EOF' "$IMG_FILE" '{payload_json_safe}' "$GEMMA_URL"
+import sys, json, requests, base64
 
-# 构建完整的 JSON 并请求 (使用 Python 构建 JSON 以防 shell 换行转义问题)
-python3 -c "
-import json, requests, os, base64
-
-img_b64 = '$IMG_B64'
-payload = {json.dumps(payload_for_sh, ensure_ascii=False)}
-payload['image_data'][0]['data'] = img_b64
+img_path = sys.argv[1]
+payload = json.loads(sys.argv[2])
+gemma_url = sys.argv[3]
 
 try:
-    resp = requests.post('$GEMMA_URL', json=payload, timeout=15.0)
+    with open(img_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode('utf-8')
+    # 注入 OpenAI 格式的图片 URL
+    payload['messages'][0]['content'][0]['image_url']['url'] = f"data:image/jpeg;base64,{{img_b64}}"
+except Exception as e:
+    print(f"❌ 无法读取图片文件: {{e}}")
+    sys.exit(1)
+
+try:
+    print(f"\\n📡 正在请求 Gemma API: {{gemma_url}} ...")
+    resp = requests.post(gemma_url, json=payload, timeout=20.0)
     print(f'\\n[Response Status] {{resp.status_code}}')
-    print(f'[Response Body] {{resp.text}}')
+    
+    if resp.status_code == 200:
+        data = resp.json()
+        content = data.get("choices", [{{}}])[0].get("message", {{}}).get("content", "")
+        print(f'[Response Content] "{{content}}"')
+    else:
+        print(f'[Response Body] {{resp.text}}')
 except Exception as e:
     print(f'\\n[Error] {{e}}')
-"
+EOF
 """
             try:
                 with open(sh_path, "w", encoding="utf-8") as f:
                     f.write(sh_content)
-                # print(f"DEBUG: 生成复测脚本: {sh_path}")
+                try:
+                    os.chmod(sh_path, 0o755)
+                except:
+                    pass
             except Exception as e:
                 print(f"⚠️ 无法保存调试脚本: {e}")
             # -----------------------------------
 
             # 5. 发起请求
-            resp = requests.post(self.gemma_url, json=payload, timeout=10.0)
+            resp = requests.post(self.gemma_url, json=payload, timeout=15.0)
             
             if resp.status_code == 200:
                 data = resp.json()
-                # 优先获取 content，这是响应的核心部分
-                raw_answer = data.get("content", "").strip().upper()
+                # OpenAI 协议返回在 choices[0].message.content
+                raw_answer = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
                 
-                # 兼容性处理
-                if not raw_answer and "choices" in data:
-                    raw_answer = data["choices"][0].get("text", "").strip().upper()
+                # 兼容性兜底：有些 llama-server 版本可能还在 content 里直接返回
+                if not raw_answer:
+                    raw_answer = data.get("content", "").strip().upper()
                 
                 print(f"DEBUG: Gemma raw response: '{raw_answer}'")
                 
