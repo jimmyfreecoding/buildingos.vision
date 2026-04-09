@@ -255,6 +255,19 @@
     "smokingConfirmed": "确认吸烟 (Confirmed)",
     "unknown": "未知 (Unknown)"
   },
+  "chain": {
+    "detectorDetected": "Detector 检测到 {count} 个候选人员",
+    "detectorHighConf": "Detector 高置信度({conf})直接确认有人",
+    "gemmaL2Result": "Gemma 二级裁决结果: {res}",
+    "gemmaConfirmed": "Gemma 复核: 确认图中存在真实人员",
+    "gemmaMissedButFound": "Gemma 复核: Detector漏报，但Gemma在全图中发现了人员",
+    "gemmaDenied": "Gemma 复核: 否决 (认定疑似目标为误报/假人)",
+    "gemmaConfirmedEmpty": "Gemma 复核: 确认全图确实无人",
+    "gemmaExceptionYes": "Gemma 响应异常，降级采信 Detector 结果: YES",
+    "gemmaExceptionNo": "Gemma 响应异常，降级采信 Detector 结果: NO",
+    "encodingFailed": "图像编码失败，降级采信 Detector",
+    "defaultUpdate": "AI 引擎默认状态更新"
+  },
   "common": {
     "confirm": "确认",
     "cancel": "取消",

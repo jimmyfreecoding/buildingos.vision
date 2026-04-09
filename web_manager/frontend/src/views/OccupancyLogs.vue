@@ -236,12 +236,12 @@
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
                       <li v-for="(step, idx) in (log.raw_payload?.decision_chain || [$t('logs.noLogChain')])" :key="idx" style="margin-bottom: 3px;">
                         <span v-if="step.includes('Gemma 复核')">
-                          {{ step }}
+                          {{ translateChainStep(step) }}
                           <el-link type="primary" size="small" @click="handleManualGemmaReview(log)" :loading="manualReviewing === log.id" style="margin-left: 5px; font-size: 11px;">
                             [{{ $t('logs.manualReviewButton') }}]
                           </el-link>
                         </span>
-                        <span v-else>{{ step }}</span>
+                        <span v-else>{{ translateChainStep(step) }}</span>
                       </li>
                     </ul>
                   </div>
@@ -428,6 +428,37 @@ const submitTest = async () => {
 // -------------------------
 
 const manualReviewing = ref('')
+
+const translateChainStep = (step) => {
+  if (!step) return step
+  
+  // 1. Detector 检测到 X 个候选人员
+  let match = step.match(/Detector 检测到 (\d+) 个候选人员/)
+  if (match) return t('chain.detectorDetected', { count: match[1] })
+
+  // 2. Detector 高置信度(X)直接确认有人
+  match = step.match(/Detector 高置信度\(([\d.]+)\)直接确认有人/)
+  if (match) return t('chain.detectorHighConf', { conf: match[1] })
+
+  // 3. Gemma 二级裁决结果: YES/NO
+  match = step.match(/Gemma 二级裁决结果: (\w+)/)
+  if (match) return t('chain.gemmaL2Result', { res: match[1] })
+
+  // 4. 固定短语匹配
+  const directMap = {
+    "Gemma 复核: 确认图中存在真实人员": "chain.gemmaConfirmed",
+    "Gemma 复核: Detector漏报，但Gemma在全图中发现了人员": "chain.gemmaMissedButFound",
+    "Gemma 复核: 否决 (认定疑似目标为误报/假人)": "chain.gemmaDenied",
+    "Gemma 复核: 确认全图确实无人": "chain.gemmaConfirmedEmpty",
+    "Gemma 响应异常，降级采信 Detector 结果: YES": "chain.gemmaExceptionYes",
+    "Gemma 响应异常，降级采信 Detector 结果: NO": "chain.gemmaExceptionNo",
+    "图像编码失败，降级采信 Detector": "chain.encodingFailed",
+    "AI 引擎默认状态更新": "chain.defaultUpdate",
+    "直接采信无日志": "logs.noLogChain"
+  }
+
+  return directMap[step] ? t(directMap[step]) : step
+}
 
 const handleManualGemmaReview = async (log) => {
   if (!log.images || log.images.length === 0) return
