@@ -783,13 +783,13 @@ onMounted(() => {
   border-radius: 3px;
 }
 
-/* GitHub Light Theme Heatmap Colors */
+/* Element Plus Primary Blue Theme Heatmap Colors */
 .color-level-null { background-color: #ebedf0; } /* 根本没日志（未来时间，断网等） */
-.color-level-0 { background-color: #d1d5da; }    /* 有判断日志，但是判定为无人 */
-.color-level-1 { background-color: #d9ecff; }
-.color-level-2 { background-color: #a0cfff; }
+.color-level-0 { background-color: #f4f4f5; }    /* 有判断日志，但是判定为无人 */
+.color-level-1 { background-color: #c6e2ff; }
+.color-level-2 { background-color: #79bbff; }
 .color-level-3 { background-color: #409eff; }
-.color-level-4 { background-color: #005cb3; }
+.color-level-4 { background-color: #337ecc; }
 
 .heatmaps-wrapper {
   display: flex;
