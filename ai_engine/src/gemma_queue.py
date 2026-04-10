@@ -101,11 +101,16 @@ class GemmaReviewQueue:
             img_b64 = base64.b64encode(jpg_bytes).decode('utf-8')
             img_url = f"data:image/jpeg;base64,{img_b64}"
             
-            # 3. 构造 OpenAI 兼容的消息体 (使用传入的 prompt)
+            # 3. 构造 OpenAI 兼容的消息体 (要求输出 JSON)
+            system_prompt = (
+                "You are a professional image analyzer. You MUST output a JSON object ONLY. "
+                "Structure: {\"result\": \"YES\" or \"NO\", \"analysis\": \"brief description\"}"
+            )
+            
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a direct image classifier. Answer ONLY 'YES' or 'NO'. DO NOT explain. DO NOT think out loud."
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
@@ -116,17 +121,17 @@ class GemmaReviewQueue:
                 }
             ]
             
-            # 4. 组装请求体 (同步验证成功的逻辑)
+            # 4. 组装请求体
             payload = {
                 "model": "buildingos_review_engine",
                 "messages": messages,
                 "chat_template_kwargs": {
-                    "enable_thinking": False  # 禁用思维链，逼迫模型直接输出结果
+                    "enable_thinking": False  # 禁用思维链，直接输出 JSON
                 },
                 "temperature": 0.0,
-                "max_tokens": 32, # 稍微增加点 token，防止截断
+                "max_tokens": 256, 
                 "stream": False,
-                "stop": ["<end_of_turn>", "<eos>", "\n"]
+                "stop": ["<end_of_turn>", "<eos>"]
             }
             
             # 5. 发起请求
@@ -135,31 +140,49 @@ class GemmaReviewQueue:
             if resp.status_code == 200:
                 data = resp.json()
                 msg = data.get('choices', [{}])[0].get('message', {})
-                content = msg.get('content', '').strip().upper()
-                reasoning = msg.get('reasoning_content', '').strip().upper()
+                content = msg.get('content', '').strip()
                 
-                # 综合判定：同时看 content 和 reasoning_content
-                # 优先级：首先看 content 是否包含 YES/NO。如果不包含，再看 reasoning
-                # 改进判定：只有在内容非常明确的情况下才采信
-                
-                if content.startswith("YES") or "YES" in content[:10]:
-                    return "YES"
-                elif content.startswith("NO") or "NO" in content[:10]:
-                    return "NO"
-                elif "YES" in reasoning:
-                    return "YES"
-                elif "NO" in reasoning:
-                    return "NO"
-                else:
-                    print(f"DEBUG: Gemma Response unclear: content='{content}', reasoning='{reasoning}'")
-                    return "UNKNOWN"
+                # 尝试解析 JSON
+                import json
+                try:
+                    # 清理可能存在的 Markdown 代码块
+                    clean_content = content.replace("```json", "").replace("```", "").strip()
+                    res_json = json.loads(clean_content)
+                    
+                    raw_result = str(res_json.get("result", "UNKNOWN")).upper()
+                    analysis = res_json.get("analysis", "")
+                    
+                    # 归一化结果
+                    final_res = "UNKNOWN"
+                    if "YES" in raw_result: final_res = "YES"
+                    elif "NO" in raw_result: final_res = "NO"
+                    
+                    return {
+                        "result": final_res,
+                        "prompt": prompt,
+                        "llm_response": content,
+                        "reasoning": analysis
+                    }
+                except Exception as je:
+                    print(f"⚠️ Gemma JSON 解析失败: {je}, Content: {content}")
+                    # 备选方案
+                    final_res = "UNKNOWN"
+                    if "YES" in content.upper()[:50]: final_res = "YES"
+                    elif "NO" in content.upper()[:50]: final_res = "NO"
+                    
+                    return {
+                        "result": final_res,
+                        "prompt": prompt,
+                        "llm_response": content,
+                        "reasoning": "JSON Parse Error"
+                    }
             else:
                 print(f"❌ Gemma API 状态码异常: {resp.status_code}")
-                return "UNKNOWN"
+                return { "result": "UNKNOWN", "prompt": prompt, "llm_response": f"HTTP {resp.status_code}", "reasoning": "" }
                 
         except Exception as e:
             print(f"❌ Gemma 调用过程中发生崩溃: {e}")
-            return "UNKNOWN"
+            return { "result": "UNKNOWN", "prompt": prompt, "llm_response": str(e), "reasoning": "" }
         finally:
             try:
                 requests.delete(self.gemma_slots_url, timeout=1.0)
@@ -169,17 +192,9 @@ class GemmaReviewQueue:
     def submit_review(self, task_id, task_type, jpg_bytes, prompt, yolo_conf=1.0):
         """
         提交复核任务并阻塞等待结果。
-        为了完全杜绝 OpenCV 多线程引发的 C++ 内存崩溃，
-        这里接收的是纯 Python bytes (jpg_bytes) 而不是 numpy array。
-        task_type: 'presence' 或 'smoking'
-        yolo_conf: YOLO 给出的置信度，用于决定优先级
+        返回: dict { "result": "YES/NO/UNKNOWN", "prompt": "...", "llm_response": "...", "reasoning": "..." }
         """
-        # 1. 计算优先级 (数字越小越优先)
-        # 文档 5.5 优先级：
-        # 1: YOLO 判定“无人”（防误关灯，这是最高优的，如果有任何可疑，马上复核）
-        # 2: YOLO 边界低置信样本 (0.25 - 0.4 之间)
-        # 3: 普通 Presence 确认
-        # 4: Smoking 复核 (吸烟对时效性要求没那么高，可以稍微排后)
+        # 1. 计算优先级
         priority = 3
         if task_type == 'presence':
             if yolo_conf < 0.2:
@@ -202,18 +217,15 @@ class GemmaReviewQueue:
         try:
             self.task_queue.put_nowait((priority, time.time(), task))
         except queue.Full:
-            print(f"⚠️ Gemma 队列已满，直接拒绝任务 {task_id}，执行降级")
-            # 降级规则 (文档 7.2)：
-            # 现在改为返回 UNKNOWN，让业务逻辑决定是否降级到 YOLO
-            return "UNKNOWN"
+            print(f"⚠️ Gemma 队列已满，直接拒绝任务 {task_id}")
+            return { "result": "UNKNOWN", "prompt": prompt, "llm_response": "Queue Full", "reasoning": "" }
 
-        # 4. 阻塞等待结果 (最多等 20 秒)
-        # print(f"⏳ 任务 {task_id} 排队中 (优先级 {priority})...")
+        # 4. 阻塞等待结果
         waited = task['result_event'].wait(timeout=20.0)
         
         if not waited or task['result'] is None:
-            print(f"⚠️ 任务 {task_id} 等待结果超时，执行降级")
-            return "UNKNOWN"
+            print(f"⚠️ 任务 {task_id} 等待结果超时")
+            return { "result": "UNKNOWN", "prompt": prompt, "llm_response": "Timeout", "reasoning": "" }
             
         return task['result']
 

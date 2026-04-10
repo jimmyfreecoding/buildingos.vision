@@ -501,29 +501,34 @@ const clearGemmaCache = () => {
 };
 
 app.post('/api/gemma/infer', (req, res) => {
-    const { image, prompt, enableThinking } = req.body; // image should be base64 string, prompt is text
+    const { image, prompt, enableThinking } = req.body; 
+
+    // 强制 JSON 输出的 System Prompt
+    const systemPrompt = (
+        "You are a professional image analyzer. You MUST output a JSON object ONLY. " +
+        "Structure: {\"result\": \"YES/NO/SUCCESS\", \"analysis\": \"your detailed observation or result\"}"
+    );
 
     const payload = JSON.stringify({
         model: "buildingos_review_engine",
         messages: [
             {
                 role: "system",
-                content: "不要输出思考过程。请简明扼要地回答问题，必要时描述方位。"
+                content: systemPrompt
             },
             {
                 role: "user",
                 content: [
                     { type: "image_url", image_url: { url: image } },
-                    { type: "text", text: prompt || "Describe this image in detail." }
+                    { type: "text", text: prompt || "图中是否有人？请回答 YES 或 NO。" }
                 ]
             }
         ],
         chat_template_kwargs: {
-            enable_thinking: enableThinking !== undefined ? enableThinking : true // Enable thinking for UI display
+            enable_thinking: enableThinking !== undefined ? enableThinking : false 
         },
         stream: false,
         temperature: 0.0,
-        top_p: 0.9,
         max_tokens: 512
     });
 
@@ -547,18 +552,35 @@ app.post('/api/gemma/infer', (req, res) => {
             const duration = Date.now() - startTime;
             try {
                 const response = JSON.parse(data);
+                const content = response.choices?.[0]?.message?.content || '';
+                
+                let result = 'UNKNOWN';
+                let reasoning = response.choices?.[0]?.message?.reasoning_content || '';
+                
+                try {
+                    // 清理 Markdown 代码块
+                    const cleanContent = content.replace(/```json/g, "").replace(/```/g, "").trim();
+                    const parsed = JSON.parse(cleanContent);
+                    result = parsed.result || 'UNKNOWN';
+                    if (parsed.analysis) reasoning = parsed.analysis;
+                } catch (e) {
+                    console.warn("Manual infer JSON parse failed, fallback to text search");
+                    if (content.toUpperCase().includes("YES")) result = "YES";
+                    else if (content.toUpperCase().includes("NO")) result = "NO";
+                    else result = content.substring(0, 50); // Fallback for descriptions
+                }
+
                 res.json({ 
-                    result: response.choices?.[0]?.message?.content || 'No result', 
-                    reasoning: response.choices?.[0]?.message?.reasoning_content || '',
+                    result: result, 
+                    prompt: prompt,
+                    llm_response: content,
+                    reasoning: reasoning,
                     usage: response.usage,
-                    timings: response.timings,
-                    durationMs: duration,
-                    raw: response 
+                    durationMs: duration
                 });
             } catch (e) {
                 res.status(500).json({ error: 'Failed to parse Gemma response', raw: data });
             } finally {
-                // 主动释放 Cache
                 clearGemmaCache();
             }
         });

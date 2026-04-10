@@ -490,25 +490,26 @@ const handleManualGemmaReview = async (log) => {
     const res = await axios.post('/api/gemma/infer', {
       image: imageBase64,
       prompt: prompt,
-      enableThinking: true
+      enableThinking: false // 自动 JSON 模式不需要思维链显示
     })
 
-    const result = res.data.result || 'No result'
-    const reasoning = res.data.reasoning || ''
+    const { result, reasoning, prompt: sentPrompt, llm_response } = res.data
     
     ElMessageBox.alert(
       `<div style="font-size: 14px;">
-        <p><b>${t('logs.manualReviewResultTitle')}</b> <span style="color: ${result.includes('YES') ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
+        <p><b>${t('logs.manualReviewResultTitle')}</b> <span style="color: ${result === 'YES' ? '#67C23A' : '#F56C6C'}; font-weight: bold;">${result}</span></p>
         <p style="margin-top: 10px;"><b>${t('logs.manualReviewReasoningTitle')}</b></p>
-        <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266; max-height: 200px; overflow-y: auto;">
+        <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266; max-height: 150px; overflow-y: auto; margin-bottom: 10px;">
           ${reasoning || t('logs.none')}
         </div>
+        <p><b>LLM Raw Response:</b></p>
+        <pre style="background: #303133; color: #fff; padding: 10px; border-radius: 4px; font-size: 11px; overflow-x: auto;">${llm_response}</pre>
       </div>`,
       t('logs.manualReviewDialogTitle'),
       {
         dangerouslyUseHTMLString: true,
         confirmButtonText: t('logs.close'),
-        width: '500px'
+        width: '600px'
       }
     )
   } catch (e) {

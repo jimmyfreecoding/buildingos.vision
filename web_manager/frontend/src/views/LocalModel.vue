@@ -63,22 +63,23 @@
           <el-skeleton :rows="5" animated />
         </div>
         <div v-else class="result-container">
-          <!-- Reasoning Collapse (if present) -->
-          <el-collapse v-if="inferReasoning" class="reasoning-collapse">
+          <!-- Final Result (Categorized) -->
+          <div :class="['result-box', inferResult === 'YES' ? 'occupied' : inferResult === 'NO' ? 'empty' : '']">
+            <div class="result-label">RESULT: {{ inferResult }}</div>
+            <div class="analysis-content">{{ inferReasoning }}</div>
+          </div>
+
+          <!-- Raw LLM Response -->
+          <el-collapse class="raw-collapse">
             <el-collapse-item name="1">
               <template #title>
-                <el-icon class="header-icon"><Cpu /></el-icon> {{ $t('localModel.reasoningTitle') }}
+                <el-icon class="header-icon"><Cpu /></el-icon> LLM Raw JSON Response
               </template>
-              <div class="reasoning-content">
-                <pre>{{ inferReasoning }}</pre>
+              <div class="raw-content">
+                <pre>{{ inferRawResponse }}</pre>
               </div>
             </el-collapse-item>
           </el-collapse>
-
-          <!-- Final Result -->
-          <div class="result-box">
-            <pre>{{ inferResult }}</pre>
-          </div>
 
           <!-- Metrics Footer -->
           <div v-if="inferMetrics" class="metrics-footer">
@@ -116,6 +117,7 @@ const { t } = useI18n()
 const inferring = ref(false)
 const inferResult = ref('')
 const inferReasoning = ref('')
+const inferRawResponse = ref('')
 const inferMetrics = ref(null)
 const inferError = ref('')
 
@@ -166,6 +168,7 @@ const submitInference = async () => {
   inferring.value = true
   inferResult.value = ''
   inferReasoning.value = ''
+  inferRawResponse.value = ''
   inferMetrics.value = null
   inferError.value = ''
 
@@ -181,6 +184,7 @@ const submitInference = async () => {
     } else {
       inferResult.value = res.data.result
       inferReasoning.value = res.data.reasoning
+      inferRawResponse.value = res.data.llm_response
       
       // Calculate metrics if available
       if (res.data.usage && res.data.timings) {
@@ -313,12 +317,52 @@ onMounted(() => {
   padding: 15px;
   border-radius: 4px;
   border: 1px solid #e1f3d8;
+  color: #303133;
+  line-height: 1.6;
+}
+
+.result-box.occupied {
+  background-color: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
+}
+
+.result-box.empty {
+  background-color: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
+}
+
+.result-label {
+  font-weight: bold;
+  font-size: 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed rgba(0,0,0,0.1);
+  padding-bottom: 5px;
+}
+
+.analysis-content {
+  font-size: 14px;
   white-space: pre-wrap;
   word-wrap: break-word;
-  color: #303133;
-  font-family: monospace;
-  line-height: 1.6;
-  font-size: 14px;
+}
+
+.raw-collapse {
+  margin-top: 10px;
+}
+
+.raw-content {
+  padding: 10px;
+  background-color: #303133;
+  color: #fff;
+  border-radius: 4px;
+}
+
+.raw-content pre {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .metrics-footer {

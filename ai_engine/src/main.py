@@ -301,7 +301,7 @@ except Exception as e:
         print("   💡 Try starting it: 'sudo systemctl start emqx' or 'sudo docker compose up -d' if using Docker.")
     print("   WARNING: AI Engine will continue to run without publishing events.")
 
-def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0):
+def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0, gemma_details=None):
     """
     不管是否触发 MQTT 报警，每一分钟（或每一个采样周期）都将原始判定结果
     追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
@@ -357,6 +357,9 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
                 "yolo_count": yolo_count
             }
         }
+        
+        if gemma_details:
+            log_entry["gemma"] = gemma_details
         
         json_path = os.path.join(target_dir, f"{cam_id}_sample_{timestamp_ms}.json")
         with open(json_path, 'w', encoding='utf-8') as f:
@@ -591,12 +594,14 @@ def process_camera(cam_id, cam_info):
                         decision_chain.append(f"Detector 高置信度({max_conf:.2f})直接确认有人")
                     else:
                         # 2. 否则，送给 Gemma 做最终裁决
-                        # 改进提示词：尽量简单直接
                         prompt = "图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
-                            gemma_res = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+                            # submit_review 现在返回 dict {result, prompt, llm_response, reasoning}
+                            gemma_data = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
+                            gemma_res = gemma_data.get("result", "UNKNOWN")
+                            gemma_details = gemma_data
                             
                             if gemma_res == "UNKNOWN":
                                 # 异常降级保护：如果 Gemma 挂了或超时，降级采信 Detector 的原始结果
@@ -612,6 +617,7 @@ def process_camera(cam_id, cam_info):
                             log_info(f"[{cam_id}] OpenCV JPEG 编码失败，降级采信 Detector")
                             gemma_res = "YES" if yolo_count > 0 else "NO"
                             decision_chain.append("图像编码失败，降级采信 Detector")
+                            gemma_details = None
                     
                     if gemma_res == "YES":
                         has_person = True
@@ -633,15 +639,14 @@ def process_camera(cam_id, cam_info):
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
                     
                     # 【核心优化】反馈到前端页面：
-                    # 1. 始终保存 [标注图, 原始图]，确保前端首选看到的是带框的标注图
-                    # 2. 即使 yolo_count == 0，也会显示出模型发现的其他物体（如桌子、电视等蓝色框）
                     save_minute_log_for_frontend(
                         cam_id, 
                         area_code, 
                         has_person, 
                         images=[annotated_frame, frame], 
                         decision_chain=decision_chain, 
-                        yolo_count=yolo_count
+                        yolo_count=yolo_count,
+                        gemma_details=gemma_details
                     )
                     
                     # 如果状态机决定收敛，触发 MQTT
@@ -677,7 +682,8 @@ def process_camera(cam_id, cam_info):
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
-                            gemma_res = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", jpg_bytes, prompt, yolo_conf=max_conf)
+                            gemma_data = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", jpg_bytes, prompt, yolo_conf=max_conf)
+                            gemma_res = gemma_data.get("result", "UNKNOWN")
                         else:
                             log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
                             gemma_res = "NO"
