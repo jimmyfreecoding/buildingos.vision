@@ -520,7 +520,7 @@ app.post('/api/gemma/infer', (req, res) => {
                 role: "user",
                 content: [
                     { type: "image_url", image_url: { url: image } },
-                    { type: "text", text: prompt || "图中是否有人？请回答 YES 或 NO。" }
+                    { type: "text", text: prompt || "检测图片中是否有活人存在，仔细鉴别头肩和肢体等人体要输，如果有人回答YES，并且告知在什么位置。没有则回答NO" }
                 ]
             }
         ],

@@ -594,7 +594,7 @@ def process_camera(cam_id, cam_info):
                         decision_chain.append(f"Detector 高置信度({max_conf:.2f})直接确认有人")
                     else:
                         # 2. 否则，送给 Gemma 做最终裁决
-                        prompt = "图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。"
+                        prompt = "检测图片中是否有活人存在，仔细鉴别头肩和肢体等人体要输，如果有人回答YES，并且告知在什么位置。没有则回答NO"
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
