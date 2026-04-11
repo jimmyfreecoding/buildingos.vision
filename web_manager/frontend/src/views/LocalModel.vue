@@ -12,7 +12,7 @@
             <el-option :label="$t('localModel.descTemplate')" value="Describe this image in detail. Please reply in Chinese. (请详细描述这张图片，用中文回复)" />
             <el-option :label="$t('localModel.smokingTemplate')" value="Is there a person smoking in this image? Answer 'Yes' or 'No' and provide reasons. Please reply in Chinese. (图片中是否有人在抽烟？用中文回复是或否，并说明理由。)" />
             <el-option :label="$t('localModel.helmetTemplate')" value="Are all people in the image wearing safety helmets? Detail any violations. Please reply in Chinese. (图片中所有人是否都佩戴了安全帽？请用中文详细说明违规情况。)" />
-            <el-option :label="$t('localModel.presenceTemplate')" value="图片中是否有人？如果确定有人，请回答 YES，否则回答 NO。只回答结果。" />
+            <el-option :label="$t('localModel.presenceTemplate')" value="检测图片中是否有活人存在，仔细鉴别头肩和肢体等人体要输，如果有人回答YES，并且告知在什么位置。没有则回答NO" />
             <el-option :label="$t('localModel.customTemplate')" value="custom" />
           </el-select>
         </el-form-item>
