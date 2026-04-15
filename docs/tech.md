@@ -392,7 +392,8 @@ else:
 1. ZLMediaKit 成功拉流。
 2. Python 脚本成功在画面上画出人体关键点。
 3. Node-RED 收到有人/无人的 MQTT 信号。
----
+
+---
 
 ## 7. 核心业务逻辑时段策略 (Core Business Logic Periods)
 
