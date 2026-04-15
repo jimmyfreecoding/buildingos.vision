@@ -144,6 +144,17 @@ app.get('/api/system/info', (req, res) => {
         
         const cpus = os.cpus();
         
+        // 4. 获取存储空间信息
+        let diskInfo = { used: 0, total: 0, percent: 0 };
+        try {
+            const stats = fs.statfsSync('/');
+            diskInfo.total = stats.bsize * stats.blocks;
+            diskInfo.used = diskInfo.total - (stats.bsize * stats.bfree);
+            diskInfo.percent = (diskInfo.used / diskInfo.total) * 100;
+        } catch (diskErr) {
+            console.warn("Failed to fetch disk info:", diskErr);
+        }
+
         exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (smiErr, smiOut) => {
             let gpuInfo = { util: 0, memUsed: 0, memTotal: 0 };
             if (!smiErr && smiOut) {
@@ -172,6 +183,7 @@ app.get('/api/system/info', (req, res) => {
                     swap: { usagePercent: 0, used: 0, total: 0 }
                 },
                 gpu: gpuInfo,
+                disk: diskInfo, // 新增磁盘信息
                 engines: {},
                 power: { total: 0, gpu: 0, cpu: 0 },
                 temperature: {},

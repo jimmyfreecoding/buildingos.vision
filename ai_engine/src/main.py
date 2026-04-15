@@ -598,21 +598,32 @@ def process_camera(cam_id, cam_info):
                         success, buffer = cv2.imencode('.jpg', frame)
                         if success:
                             jpg_bytes = buffer.tobytes()
-                            # submit_review 现在返回 dict {result, prompt, llm_response, reasoning}
+                            # submit_review 现在返回 dict {result, prompt, llm_response, reasoning, retries}
                             gemma_data = gemma_queue.submit_review(f"{cam_id}_P_{now}", "presence", jpg_bytes, prompt, yolo_conf=max_conf)
                             gemma_res = gemma_data.get("result", "UNKNOWN")
                             gemma_details = gemma_data
+                            retries = gemma_data.get("retries", 0)
                             
                             if gemma_res == "UNKNOWN":
-                                # 异常降级保护：如果 Gemma 挂了或超时，降级采信 Detector 的原始结果
+                                # 异常降级保护：如果所有重试均失败
+                                hour = datetime.now().hour
+                                is_worktime = 9 <= hour < 19
+                                
+                                retry_info = f" (重试 {retries} 次失败)" if retries > 0 else ""
+                                
                                 if yolo_count > 0:
-                                    gemma_res = "YES"
-                                    decision_chain.append("Gemma 响应异常，降级采信 Detector 结果: YES")
+                                    if is_worktime:
+                                        gemma_res = "YES"
+                                        decision_chain.append(f"Gemma 响应异常{retry_info}，上班时段采信 Detector: YES")
+                                    else:
+                                        gemma_res = "NO"
+                                        decision_chain.append(f"Gemma 响应异常{retry_info}，非上班时段强制判定: NO")
                                 else:
                                     gemma_res = "NO"
-                                    decision_chain.append("Gemma 响应异常，降级采信 Detector 结果: NO")
+                                    decision_chain.append(f"Gemma 响应异常{retry_info}，且未发现目标，判定: NO")
                             else:
-                                decision_chain.append(f"Gemma 二级裁决结果: {gemma_res}")
+                                retry_suffix = f" (重试 {retries} 次成功)" if retries > 0 else ""
+                                decision_chain.append(f"Gemma 二级裁决结果: {gemma_res}{retry_suffix}")
                         else:
                             log_info(f"[{cam_id}] OpenCV JPEG 编码失败，降级采信 Detector")
                             gemma_res = "YES" if yolo_count > 0 else "NO"

@@ -232,7 +232,12 @@
                     class="log-image"
                   />
                   <div class="evidence-chain" style="margin-top: 10px; font-size: 12px; color: #606266; background: #f5f7fa; padding: 8px; border-radius: 4px; min-height: 80px;">
-                    <b style="color: #303133;">{{ $t('logs.evidenceChainTitle') }}</b>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <b style="color: #303133;">{{ $t('logs.evidenceChainTitle') }}</b>
+                      <el-link type="info" :underline="false" style="font-size: 11px;" @click="viewRawJson(log)">
+                        [{{ $t('logs.viewRawJson') }}]
+                      </el-link>
+                    </div>
                     <ul style="padding-left: 20px; margin-top: 5px; margin-bottom: 0;">
                       <li v-for="(step, idx) in (log.raw_payload?.decision_chain || [$t('logs.noLogChain')])" :key="idx" style="margin-bottom: 3px;">
                         <span v-if="step.includes('Gemma 复核')">
@@ -353,6 +358,18 @@ let refreshInterval = null
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const dialogLogs = ref([])
+
+const viewRawJson = (log) => {
+  ElMessageBox.alert(
+    `<pre style="background: #303133; color: #fff; padding: 15px; border-radius: 4px; font-size: 12px; overflow: auto; max-height: 500px;">${JSON.stringify(log, null, 2)}</pre>`,
+    t('logs.rawJsonTitle'),
+    {
+      dangerouslyUseHTMLString: true,
+      confirmButtonText: t('logs.close'),
+      width: '700px'
+    }
+  )
+}
 
 // --- Summary State ---
 const summaryDialogVisible = ref(false)
@@ -531,13 +548,12 @@ const toggleAutoRefresh = (val) => {
   }
 }
 
-// 默认显示最近8天（包含今天）
+// 默认显示最近4天（包含今天）
 const getDefaultDateRange = () => {
   const dates = []
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     const d = new Date()
     d.setDate(d.getDate() - i)
-    // 补齐两位数，确保与后端的 date 文件夹名称对齐
     const year = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
@@ -546,21 +562,19 @@ const getDefaultDateRange = () => {
   return dates
 }
 
-const defaultDates = getDefaultDateRange()
+const defaultDates = ref(getDefaultDateRange())
 
 const fetchLogs = async (silent = false) => {
   if (!silent) loading.value = true
   try {
     const res = await axios.get('/api/occupancy/logs')
-    // 过滤掉脏数据 (没有摄像头ID或场景代码的无效日志)
+    // 过滤掉脏数据
     allLogs.value = (res.data || []).filter(l => l.camera_id && l.areaCode && l.areaCode !== 'UNKNOWN')
     
-    if (!selectedArea.value && uniqueAreas.value.length > 0) {
-      selectedArea.value = uniqueAreas.value[0]
-    }
-
-    // Fetch summaries for the last 8 days
-    defaultDates.forEach(date => {
+    // 如果没有选中场景，也不自动选第一个，保持为空直到用户选择
+    
+    // 仅为默认的 4 天获取日报总结
+    defaultDates.value.forEach(date => {
       fetchSummary(date)
     })
   } catch (e) {
@@ -593,7 +607,7 @@ const displayDays = computed(() => {
       datesToDisplay.push(`${year}-${month}-${day}`)
     }
   } else {
-    datesToDisplay = defaultDates
+    datesToDisplay = defaultDates.value
   }
 
   const result = []
@@ -609,7 +623,7 @@ const displayDays = computed(() => {
     // 匹配特定日期的日志 (使用 log.date 而非 log.timestamp 解析，避免跨时区导致日期漂移)
     const dayLogs = areaLogs.filter(log => log.date === dateStr)
     
-    if (dayLogs.length > 0 || datesToDisplay.length <= 8) {
+    if (dayLogs.length > 0 || datesToDisplay.length <= 4) {
       const grid = Array.from({ length: 24 }, () => Array.from({ length: 6 }, () => []))
       
       dayLogs.forEach(log => {
