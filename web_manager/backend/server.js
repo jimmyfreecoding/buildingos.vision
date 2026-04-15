@@ -124,36 +124,40 @@ app.get('/api/ping', (req, res) => {
 
 app.get('/api/system/info', (req, res) => {
     try {
-        const jtopFiles = ['/host_tmp/jtop_status.json', '/tmp/jtop_status.json'];
-        const jtopFile = jtopFiles.find(file => fs.existsSync(file));
-        if (jtopFile) {
-            const jtopData = JSON.parse(fs.readFileSync(jtopFile, 'utf8'));
-            if (jtopData.error) {
-                return res.status(503).json({ error: jtopData.error, useFallback: true });
-            }
-            if (Date.now() / 1000 - jtopData.timestamp > 5) {
-                console.warn("jtop status data is stale.");
-            }
-            return res.json(jtopData);
-        }
-        
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const usedMem = totalMem - freeMem;
-        const memUsage = (usedMem / totalMem) * 100;
-        
-        const cpus = os.cpus();
-        
-        // 4. 获取存储空间信息
+        // 1. 获取存储空间信息 (始终执行)
         let diskInfo = { used: 0, total: 0, percent: 0 };
         try {
-            const stats = fs.statfsSync('/');
+            // 注意：在容器内，我们挂载了 /host_project，通常可以使用它来检测宿主机磁盘
+            // 或者直接检测 /app/www (存储日志的地方)
+            const stats = fs.statfsSync('/app/www');
             diskInfo.total = stats.bsize * stats.blocks;
             diskInfo.used = diskInfo.total - (stats.bsize * stats.bfree);
             diskInfo.percent = (diskInfo.used / diskInfo.total) * 100;
         } catch (diskErr) {
             console.warn("Failed to fetch disk info:", diskErr);
         }
+
+        const jtopFiles = ['/host_tmp/jtop_status.json', '/tmp/jtop_status.json'];
+        const jtopFile = jtopFiles.find(file => fs.existsSync(file));
+        if (jtopFile) {
+            const jtopData = JSON.parse(fs.readFileSync(jtopFile, 'utf8'));
+            if (!jtopData.error) {
+                if (Date.now() / 1000 - jtopData.timestamp > 5) {
+                    console.warn("jtop status data is stale.");
+                }
+                // 将磁盘信息合并到 jtop 数据中返回
+                jtopData.disk = diskInfo;
+                return res.json(jtopData);
+            }
+        }
+        
+        // Fallback 逻辑
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const memUsage = (usedMem / totalMem) * 100;
+        
+        const cpus = os.cpus();
 
         exec('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', (smiErr, smiOut) => {
             let gpuInfo = { util: 0, memUsed: 0, memTotal: 0 };
@@ -365,31 +369,64 @@ app.get('/api/occupancy/summary/:date', (req, res) => {
     }
 });
 
+app.get('/api/occupancy/areas', (req, res) => {
+    const logsDir = '/app/www/occupancy_logs';
+    try {
+        if (!fs.existsSync(logsDir)) return res.json([]);
+        
+        let areaSet = new Set();
+        const dates = fs.readdirSync(logsDir).filter(f => fs.statSync(path.join(logsDir, f)).isDirectory());
+        
+        // 只扫描最近 7 天的文件夹来获取场景列表，提高速度
+        dates.sort().reverse().slice(0, 7).forEach(date => {
+            const dateDir = path.join(logsDir, date);
+            const areas = fs.readdirSync(dateDir).filter(f => fs.statSync(path.join(dateDir, f)).isDirectory());
+            areas.forEach(a => areaSet.add(a.replace(/_/g, '/'))); // 恢复斜杠显示
+        });
+        
+        res.json(Array.from(areaSet));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/occupancy/logs', (req, res) => {
     const logsDir = '/app/www/occupancy_logs';
+    const { areaCode, days } = req.query;
+    const maxDays = parseInt(days) || 4;
+
     try {
         if (!fs.existsSync(logsDir)) {
             return res.json([]);
         }
 
         let results = [];
-        const dates = fs.readdirSync(logsDir).filter(f => fs.statSync(path.join(logsDir, f)).isDirectory());
+        let dates = fs.readdirSync(logsDir).filter(f => fs.statSync(path.join(logsDir, f)).isDirectory());
         
-        dates.forEach(date => {
+        // 按日期降序排列并截取
+        dates.sort().reverse();
+        const targetDates = dates.slice(0, maxDays);
+        
+        targetDates.forEach(date => {
             const dateDir = path.join(logsDir, date);
-            const areas = fs.readdirSync(dateDir).filter(f => fs.statSync(path.join(dateDir, f)).isDirectory());
+            let areas = fs.readdirSync(dateDir).filter(f => fs.statSync(path.join(dateDir, f)).isDirectory());
             
+            // 如果提供了 areaCode，只处理该场景。注意：前端传来的 areaCode 可能是斜杠，文件夹是下划线
+            if (areaCode) {
+                const safeArea = areaCode.replace(/\//g, '_').replace(/\\/g, '_');
+                areas = areas.filter(a => a === safeArea);
+            }
+
             areas.forEach(area => {
                 const areaDir = path.join(dateDir, area);
                 const files = fs.readdirSync(areaDir);
                 
-                // Only look for JSON files
+                // 只看 JSON 文件
                 const jsonFiles = files.filter(f => f.endsWith('.json'));
                 jsonFiles.forEach(jf => {
                     try {
                         const content = fs.readFileSync(path.join(areaDir, jf), 'utf8');
                         const data = JSON.parse(content);
-                        // Add some helper fields
                         data.date = date;
                         data.id = `${date}_${area}_${jf}`;
                         results.push(data);
@@ -400,7 +437,6 @@ app.get('/api/occupancy/logs', (req, res) => {
             });
         });
         
-        // Sort by timestamp descending
         results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
         res.json(results);
     } catch (e) {

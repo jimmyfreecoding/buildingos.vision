@@ -350,6 +350,7 @@ import { marked } from 'marked'
 
 const loading = ref(false)
 const allLogs = ref([])
+const areaList = ref([]) // 存储场景列表
 const selectedArea = ref('')
 const dateRange = ref([])
 const autoRefresh = ref(false)
@@ -564,16 +565,29 @@ const getDefaultDateRange = () => {
 
 const defaultDates = ref(getDefaultDateRange())
 
+const fetchAreas = async () => {
+  try {
+    const res = await axios.get('/api/occupancy/areas')
+    areaList.value = res.data || []
+  } catch (e) {
+    console.error("Failed to fetch areas:", e)
+  }
+}
+
 const fetchLogs = async (silent = false) => {
   if (!silent) loading.value = true
   try {
-    const res = await axios.get('/api/occupancy/logs')
-    // 过滤掉脏数据
+    // 如果没有选定场景，不请求日志，只请求场景列表
+    if (!selectedArea.value) {
+      await fetchAreas()
+      if (!silent) loading.value = false
+      return
+    }
+
+    const params = { days: 4, areaCode: selectedArea.value }
+    const res = await axios.get('/api/occupancy/logs', { params })
     allLogs.value = (res.data || []).filter(l => l.camera_id && l.areaCode && l.areaCode !== 'UNKNOWN')
     
-    // 如果没有选中场景，也不自动选第一个，保持为空直到用户选择
-    
-    // 仅为默认的 4 天获取日报总结
     defaultDates.value.forEach(date => {
       fetchSummary(date)
     })
@@ -583,13 +597,20 @@ const fetchLogs = async (silent = false) => {
   if (!silent) loading.value = false
 }
 
+// 监听选择场景的变化，自动重新加载数据
+watch(selectedArea, () => {
+  fetchLogs()
+})
+
 const uniqueAreas = computed(() => {
+  // 优先使用从后端获取的场景列表，如果没有则回退到日志中解析
+  if (areaList.value.length > 0) return areaList.value
   const areas = new Set(allLogs.value.map(l => l.areaCode))
-  return Array.from(areas)
+  return Array.from(areas).sort()
 })
 
 const handleFilterChange = () => {
-  // Computed property will auto update
+  fetchLogs()
 }
 
 // 核心：按选定日期和场景，生成二维热力图数据

@@ -31,6 +31,15 @@
                 <div class="metric-desc">{{ formatBytes(sysInfo.memory.ram.used) }} / {{ formatBytes(sysInfo.memory.ram.total) }}</div>
               </el-col>
               <el-col :span="6" class="metric-item">
+                <el-progress type="dashboard" :percentage="sysInfo.memory.swap.usagePercent" :color="customColors" :width="100">
+                  <template #default="{ percentage }">
+                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
+                    <span class="percentage-label">{{ $t('dashboard.swap') }}</span>
+                  </template>
+                </el-progress>
+                <div class="metric-desc">{{ formatBytes(sysInfo.memory.swap.used) }} / {{ formatBytes(sysInfo.memory.swap.total) }}</div>
+              </el-col>
+              <el-col :span="6" class="metric-item">
                 <el-progress type="dashboard" :percentage="sysInfo.disk?.percent || 0" :color="customColors" :width="100">
                   <template #default="{ percentage }">
                     <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
@@ -38,15 +47,6 @@
                   </template>
                 </el-progress>
                 <div class="metric-desc">{{ formatBytes(sysInfo.disk?.used || 0) }} / {{ formatBytes(sysInfo.disk?.total || 0) }}</div>
-              </el-col>
-              <el-col :span="6" class="metric-item">
-                <el-progress type="dashboard" :percentage="sysInfo.gpu.util" :color="customColors" :width="100">
-                  <template #default="{ percentage }">
-                    <span class="percentage-value">{{ percentage.toFixed(0) }}%</span>
-                    <span class="percentage-label">{{ $t('dashboard.gpuLoad') }}</span>
-                  </template>
-                </el-progress>
-                <div class="metric-desc">Mem: {{ sysInfo.gpu.memUsed.toFixed(0) }}MB / {{ sysInfo.gpu.memTotal.toFixed(0) }}MB</div>
               </el-col>
             </el-row>
             
@@ -254,6 +254,7 @@ const sysInfo = ref({
     swap: { usagePercent: 0, used: 0, total: 0 }
   },
   gpu: { util: 0, memUsed: 0, memTotal: 0, freq: 0 },
+  disk: { used: 0, total: 0, percent: 0 },
   engines: {},
   power: { total: 0, gpu: 0, cpu: 0 },
   temperature: {},
