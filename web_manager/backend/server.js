@@ -127,12 +127,35 @@ app.get('/api/system/info', (req, res) => {
         // 1. 获取存储空间信息 (始终执行)
         let diskInfo = { used: 0, total: 0, percent: 0 };
         try {
-            // 注意：在容器内，我们挂载了 /host_project，通常可以使用它来检测宿主机磁盘
-            // 或者直接检测 /app/www (存储日志的地方)
-            const stats = fs.statfsSync('/app/www');
-            diskInfo.total = stats.bsize * stats.blocks;
-            diskInfo.used = diskInfo.total - (stats.bsize * stats.bfree);
-            diskInfo.percent = (diskInfo.used / diskInfo.total) * 100;
+            // 优先检测 /app/www (容器内存储路径)
+            const checkPaths = ['/app/www', '/host_project', '/'];
+            let found = false;
+            for (const p of checkPaths) {
+                if (fs.existsSync(p)) {
+                    try {
+                        // 尝试使用 statfsSync
+                        const stats = fs.statfsSync(p);
+                        diskInfo.total = Number(stats.bsize) * Number(stats.blocks);
+                        diskInfo.used = diskInfo.total - (Number(stats.bsize) * Number(stats.bfree));
+                        if (diskInfo.total > 0) {
+                            diskInfo.percent = (diskInfo.used / diskInfo.total) * 100;
+                            found = true;
+                            break;
+                        }
+                    } catch (e) {
+                        // 如果 statfsSync 失败，尝试 df 命令
+                        const dfOut = require('child_process').execSync(`df -B1 ${p} | tail -1`).toString();
+                        const parts = dfOut.trim().split(/\s+/);
+                        if (parts.length >= 4) {
+                            diskInfo.total = parseInt(parts[1]);
+                            diskInfo.used = parseInt(parts[2]);
+                            diskInfo.percent = (diskInfo.used / diskInfo.total) * 100;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
         } catch (diskErr) {
             console.warn("Failed to fetch disk info:", diskErr);
         }
@@ -140,14 +163,15 @@ app.get('/api/system/info', (req, res) => {
         const jtopFiles = ['/host_tmp/jtop_status.json', '/tmp/jtop_status.json'];
         const jtopFile = jtopFiles.find(file => fs.existsSync(file));
         if (jtopFile) {
-            const jtopData = JSON.parse(fs.readFileSync(jtopFile, 'utf8'));
-            if (!jtopData.error) {
-                if (Date.now() / 1000 - jtopData.timestamp > 5) {
-                    console.warn("jtop status data is stale.");
+            try {
+                const jtopData = JSON.parse(fs.readFileSync(jtopFile, 'utf8'));
+                if (!jtopData.error) {
+                    // 将磁盘信息合并到 jtop 数据中返回
+                    jtopData.disk = diskInfo;
+                    return res.json(jtopData);
                 }
-                // 将磁盘信息合并到 jtop 数据中返回
-                jtopData.disk = diskInfo;
-                return res.json(jtopData);
+            } catch (e) {
+                console.warn("Failed to read jtop file:", e);
             }
         }
         
@@ -187,7 +211,7 @@ app.get('/api/system/info', (req, res) => {
                     swap: { usagePercent: 0, used: 0, total: 0 }
                 },
                 gpu: gpuInfo,
-                disk: diskInfo, // 新增磁盘信息
+                disk: diskInfo,
                 engines: {},
                 power: { total: 0, gpu: 0, cpu: 0 },
                 temperature: {},

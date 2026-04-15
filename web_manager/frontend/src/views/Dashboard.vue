@@ -46,7 +46,10 @@
                     <span class="percentage-label">{{ $t('dashboard.diskUsage') }}</span>
                   </template>
                 </el-progress>
-                <div class="metric-desc">{{ formatBytes(sysInfo.disk?.used || 0) }} / {{ formatBytes(sysInfo.disk?.total || 0) }}</div>
+                <div class="metric-desc" v-if="sysInfo.disk?.total > 0">
+                  {{ formatBytes(sysInfo.disk.used) }} / {{ formatBytes(sysInfo.disk.total) }}
+                </div>
+                <div class="metric-desc" v-else>Loading...</div>
               </el-col>
             </el-row>
             

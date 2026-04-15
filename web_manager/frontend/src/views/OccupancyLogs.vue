@@ -11,7 +11,7 @@
     </template>
 
     <div class="filter-section">
-      <el-select v-model="selectedArea" :placeholder="$t('logs.selectAreaPlaceholder')" style="width: 250px; margin-right: 15px;" @change="handleFilterChange" filterable>
+      <el-select v-model="selectedArea" :placeholder="$t('logs.selectAreaPlaceholder')" style="width: 250px; margin-right: 15px;" filterable>
         <el-option v-for="area in uniqueAreas" :key="area" :label="area" :value="area"></el-option>
       </el-select>
       
@@ -339,15 +339,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch as vueWatch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
-
-const { t } = useI18n()
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Calendar, VideoCamera, Plus, Picture, Search, Document } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 
+const { t } = useI18n()
 const loading = ref(false)
 const allLogs = ref([])
 const areaList = ref([]) // 存储场景列表
@@ -597,22 +596,6 @@ const fetchLogs = async (silent = false) => {
   if (!silent) loading.value = false
 }
 
-// 监听选择场景的变化，自动重新加载数据
-watch(selectedArea, () => {
-  fetchLogs()
-})
-
-const uniqueAreas = computed(() => {
-  // 优先使用从后端获取的场景列表，如果没有则回退到日志中解析
-  if (areaList.value.length > 0) return areaList.value
-  const areas = new Set(allLogs.value.map(l => l.areaCode))
-  return Array.from(areas).sort()
-})
-
-const handleFilterChange = () => {
-  fetchLogs()
-}
-
 // 核心：按选定日期和场景，生成二维热力图数据
 const displayDays = computed(() => {
   if (!selectedArea.value) return []
@@ -649,21 +632,15 @@ const displayDays = computed(() => {
       
       dayLogs.forEach(log => {
         if (!log.timestamp) return
-        
-        // 修复：解析ISO字符串时，确保时区一致。如果是本地记录的timestamp且没有带Z，
-        // 解析出来可能会因为浏览器本地时区有偏差。
-        // 为了安全，如果timestamp中没有T或者Z，可以假设它是本地时间
         let d = new Date(log.timestamp)
-        // 如果后端返回的是 UTC (带 Z) 但你希望按照设备本地时间显示，需要确保时区
-        
         const hour = d.getHours()
         const min = d.getMinutes()
         const minIdx = Math.floor(min / 10)
         
-        // 过滤掉超过当前时间点的未来数据 (可能是时区偏差导致的数据漂移)
+        // 过滤掉超过当前时间点的未来数据
         if (isToday) {
             if (hour > currentHour || (hour === currentHour && min > currentMin)) {
-                return // 跳过未来的记录
+                return 
             }
         }
 
@@ -688,12 +665,10 @@ const getCellLogs = (dayData, hour, minuteIdx) => {
 
 const getCellIntensityClass = (dayData, hour, minuteIdx) => {
   const logs = getCellLogs(dayData, hour, minuteIdx)
-  if (logs.length === 0) return 'color-level-null' // 无记录（比如未来时间，或者断网没收到记录），使用浅灰色背景
+  if (logs.length === 0) return 'color-level-null'
   
   const occupiedLogs = logs.filter(l => l.raw_payload?.result === 'occupied')
-  if (occupiedLogs.length === 0) {
-    return 'color-level-0' // 有日志但无人，使用稍微深一点点的灰色，或者更暗的灰色与无记录区分
-  }
+  if (occupiedLogs.length === 0) return 'color-level-0'
   
   const count = occupiedLogs.length
   if (count === 1) return 'color-level-1'
@@ -722,7 +697,6 @@ const groupedLogs = computed(() => {
     groups[minKey].push(log)
   })
   
-  // 按时间倒序
   return Object.keys(groups).sort((a, b) => new Date(b) - new Date(a)).map(k => ({
     time: k,
     logs: groups[k]
@@ -755,27 +729,24 @@ const formatTime = (isoString) => {
   return date.toLocaleTimeString()
 }
 
-const getEventTypeColor = (event) => {
-  if (event === 'Smoking Alert') return 'danger'
-  return 'primary'
-}
-
-const getResultTagType = (log) => {
-  if (log.event === 'Smoking Alert') return 'danger'
-  if (log.raw_payload?.result === 'occupied') return 'success'
-  return 'info'
-}
-
-const formatResult = (log) => {
-  if (log.event === 'Smoking Alert') return t('logs.smokingConfirmed')
-  if (log.raw_payload?.result === 'occupied') return t('logs.areaOccupied')
-  if (log.raw_payload?.result === 'empty') return t('logs.areaEmpty')
-  return t('logs.unknown')
-}
-
 const getImageUrl = (relativePath) => {
   return `http://${window.location.hostname}:10081/${relativePath}`
 }
+
+const handleFilterChange = () => {
+  fetchLogs()
+}
+
+const uniqueAreas = computed(() => {
+  if (areaList.value.length > 0) return areaList.value
+  const areas = new Set(allLogs.value.map(l => l.areaCode))
+  return Array.from(areas).sort()
+})
+
+// 监听选择场景的变化，自动重新加载数据
+vueWatch(selectedArea, () => {
+  fetchLogs()
+})
 
 onMounted(() => {
   fetchLogs()
