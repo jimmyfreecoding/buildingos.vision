@@ -226,53 +226,67 @@ try:
 except Exception as e:
     log_error(f"MQTT Connection failed: {e}")
 
-# --- 业务逻辑：日志保存 ---
-def save_minute_log_for_frontend(cam_id, area_code, has_person, frame=None, decision_chain=None, yolo_count=0, gemma_details=None):
-    """保存前端 Heatmap 所需的 JSON 和切图"""
+# --- 业务逻辑：日志保存 (严格还原原始逻辑) ---
+def save_presence_log(cam_id, area_code, event_type, visual_score, is_occupied, person_count, frame, decision_chain=None, gemma_details=None):
+    """
+    严格还原原始逻辑：一分钟一个独立 JSON 和 JPG
+    文件名格式: camId_eventType_timestamp
+    """
     if not cam_id or not area_code: return
 
     try:
-        # 路径强制写死到 ZLM www 目录下
         log_dir_base = os.path.join(ZLM_WWW_DIR, "occupancy_logs")
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
         safe_area = str(area_code).replace('/', '_').replace('\\', '_')
         target_dir = os.path.join(log_dir_base, today_str, safe_area)
         os.makedirs(target_dir, exist_ok=True)
         
         timestamp_ms = int(time.time() * 1000)
-        image_name = ""
+        file_base_name = f"{cam_id}_{event_type}_{timestamp_ms}"
         
+        # 1. 保存图片
+        image_name = f"{file_base_name}.jpg"
+        image_path = os.path.join(target_dir, image_name)
         if frame is not None:
-            image_name = f"{timestamp_ms}.jpg"
-            cv2.imwrite(os.path.join(target_dir, image_name), frame)
+            cv2.imwrite(image_path, frame)
 
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "has_person": has_person,
-            "yolo_count": yolo_count,
-            "images": [image_name] if image_name else [],
-            "decision_chain": decision_chain or ["AI 引擎状态更新"],
+        # 2. 计算分数 (严格还原 main.py.bak 逻辑)
+        motion_score = 0.0
+        time_bias = 0.2 if 9 <= now.hour < 18 else 0.0
+        total_score = visual_score + (motion_score * 0.2) + (time_bias * 0.5)
+        
+        # 获取配置中的阈值
+        threshold_used = config.get("areas", [{}])[0].get("score_threshold", 0.6)
+
+        # 3. 构造原始 JSON 结构
+        log_data = {
+            "timestamp": now.isoformat(),
+            "areaCode": area_code,
+            "event": event_type,
+            "scores": {
+                "visual": float(visual_score),
+                "motion": motion_score,
+                "time_bias": time_bias,
+                "total": float(total_score)
+            },
+            "threshold_used": threshold_used,
+            "is_occupied": is_occupied,
+            "person_count": person_count,
+            "images": [f"occupancy_logs/{today_str}/{safe_area}/{image_name}"],
+            "decision_chain": decision_chain or [],
             "gemma_details": gemma_details
         }
         
-        log_file = os.path.join(target_dir, "minute_logs.json")
-        existing_data = []
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-            except: pass
-        
-        existing_data.append(log_entry)
-        if len(existing_data) > 1440: existing_data = existing_data[-1440:]
+        # 4. 保存独立 JSON 文件
+        json_file = os.path.join(target_dir, f"{file_base_name}.json")
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(log_data, f, indent=4, ensure_ascii=False)
             
-        with open(log_file, 'w', encoding='utf-8') as f:
-            json.dump(existing_data, f, indent=2, ensure_ascii=False)
-        
-        log_info(f"📊 日志保存成功: {log_file} (条目数: {len(existing_data)})")
+        log_info(f"📊 原始格式日志保存成功: {file_base_name}.json")
             
     except Exception as e:
-        log_error(f"Error saving minute log to {target_dir}: {e}")
+        log_error(f"Error saving original format log to {target_dir}: {e}")
 
 # --- 业务逻辑：状态机存储 ---
 camera_state_machines = {}
@@ -355,11 +369,18 @@ def occupancy_task(cam_config):
                 if final_status == "occupied":
                     ssm.trigger_presence()
             
-            # 6. 保存本地日志 (Heatmap 所需)
-            save_minute_log_for_frontend(
-                cam_id, area_code, final_has_person, 
-                frame=frame, decision_chain=decision_chain, 
-                yolo_count=person_count, gemma_details=gemma_details
+            # 6. 保存本地日志 (Heatmap 所需 - 严格还原原始格式)
+            visual_score = person_results[0]['conf'] if person_results else 0.0
+            save_presence_log(
+                cam_id=cam_id,
+                area_code=area_code,
+                event_type="presence",
+                visual_score=visual_score,
+                is_occupied=final_has_person,
+                person_count=person_count,
+                frame=frame,
+                decision_chain=decision_chain,
+                gemma_details=gemma_details
             )
             
             # 每分钟采样一次
