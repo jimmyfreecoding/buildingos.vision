@@ -300,26 +300,80 @@ app.get('/api/ai/status', (req, res) => {
     try {
         const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : { streams: { smoking: [], occupancy: [] } };
         
-        exec(`${HOST_NSENTER} systemctl is-active ai-engine`, (err, stdout) => {
+        // 1. 先检查 systemd 服务状态
+        exec(`${HOST_NSENTER} systemctl is-active ai-engine`, async (err, stdout) => {
             const isAiEngineUp = (stdout || '').trim() === 'active';
             
+            let aiEngineDetails = null;
+            if (isAiEngineUp) {
+                // 2. 如果服务在运行，尝试从 AI Engine 的 Flask API 获取详细模型状态
+                try {
+                    const response = await new Promise((resolve, reject) => {
+                        const request = http.get(`http://${AI_ENGINE_HOST}:5000/status`, (apiRes) => {
+                            let data = '';
+                            apiRes.on('data', chunk => data += chunk);
+                            apiRes.on('end', () => resolve(JSON.parse(data)));
+                        });
+                        request.on('error', reject);
+                        request.setTimeout(1000, () => {
+                            request.destroy();
+                            reject(new Error('Timeout'));
+                        });
+                    });
+                    aiEngineDetails = response;
+                } catch (e) {
+                    console.error("Failed to fetch detailed AI status:", e.message);
+                }
+            }
+
             let tasks = [];
             if (config.streams) {
+                // 处理吸烟检测任务
                 if (config.streams.smoking) {
                     config.streams.smoking.forEach(s => {
+                        let status = isAiEngineUp ? 'Running' : 'Offline';
+                        let detail = "";
+                        
+                        if (aiEngineDetails?.models?.smoking) {
+                            const smokingInfo = aiEngineDetails.models.smoking;
+                            status = smokingInfo.status; // 直接使用 AI 引擎返回的真实状态 (Running/Failed)
+                            detail = smokingInfo.status === 'Failed' ? `Error: ${smokingInfo.error}` : `Model: ${smokingInfo.model.split('/').pop()}`;
+                        }
+
                         tasks.push({
                             camId: s.id,
                             taskType: 'smoking',
-                            status: isAiEngineUp ? 'Running' : 'Offline'
+                            status: status,
+                            detail: detail
                         });
                     });
                 }
+                // 处理人员感知任务
                 if (config.streams.occupancy) {
                     config.streams.occupancy.forEach(s => {
+                        let status = isAiEngineUp ? 'Running' : 'Offline';
+                        let detail = "";
+                        let modelInfo = null;
+
+                        if (aiEngineDetails?.models?.presence) {
+                            const p = aiEngineDetails.models.presence;
+                            status = p.status;
+                            modelInfo = {
+                                active: p.active_backend,
+                                primary: p.primary_model.split('/').pop(),
+                                primaryStatus: p.primary_status,
+                                fallback: p.fallback_model.split('/').pop(),
+                                fallbackStatus: p.fallback_status
+                            };
+                            detail = `Backend: ${p.active_backend}`;
+                        }
+
                         tasks.push({
                             camId: s.id,
                             taskType: 'occupancy',
-                            status: isAiEngineUp ? 'Running' : 'Offline'
+                            status: status,
+                            detail: detail,
+                            modelInfo: modelInfo
                         });
                     });
                 }

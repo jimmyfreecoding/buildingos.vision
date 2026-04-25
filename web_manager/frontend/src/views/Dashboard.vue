@@ -217,7 +217,39 @@
               </el-table-column>
               <el-table-column prop="status" :label="$t('dashboard.status')">
                  <template #default="scope">
-                    <el-tag size="small" :type="scope.row.status === 'Running' ? 'success' : 'warning'">
+                    <el-popover
+                      placement="top-start"
+                      :title="scope.row.taskType === 'smoking' ? '吸烟检测详情' : '人员感知详情'"
+                      :width="300"
+                      trigger="hover"
+                      v-if="scope.row.detail || scope.row.modelInfo"
+                    >
+                      <template #reference>
+                        <el-tag size="small" :type="scope.row.status === 'Running' ? 'success' : (scope.row.status === 'Failed' ? 'danger' : 'warning')" style="cursor: pointer;">
+                          <span style="display: flex; align-items: center; gap: 5px;">
+                            <span v-if="scope.row.status === 'Running'" class="status-dot green"></span>
+                            <span v-else-if="scope.row.status === 'Failed'" class="status-dot red"></span>
+                            <span v-else class="status-dot yellow"></span>
+                            {{ scope.row.status }}
+                          </span>
+                        </el-tag>
+                      </template>
+                      <div class="task-detail-popover">
+                        <div v-if="scope.row.taskType === 'smoking'">
+                          <p><strong>状态:</strong> {{ scope.row.status }}</p>
+                          <p v-if="scope.row.detail"><strong>详细:</strong> {{ scope.row.detail }}</p>
+                        </div>
+                        <div v-else-if="scope.row.modelInfo">
+                          <p><strong>当前引擎:</strong> <el-tag size="small" type="success">{{ scope.row.modelInfo.active }}</el-tag></p>
+                          <p><strong>主模型:</strong> {{ scope.row.modelInfo.primary }}</p>
+                          <p><strong>状态:</strong> <el-tag size="small" :type="scope.row.modelInfo.primaryStatus === 'Active' ? 'success' : 'danger'">{{ scope.row.modelInfo.primaryStatus }}</el-tag></p>
+                          <hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
+                          <p><strong>备用模型:</strong> {{ scope.row.modelInfo.fallback }}</p>
+                          <p><strong>状态:</strong> <el-tag size="small" :type="scope.row.modelInfo.fallbackStatus === 'Active' ? 'success' : (scope.row.modelInfo.fallbackStatus === 'Standby' ? 'info' : 'danger')">{{ scope.row.modelInfo.fallbackStatus }}</el-tag></p>
+                        </div>
+                      </div>
+                    </el-popover>
+                    <el-tag v-else size="small" :type="scope.row.status === 'Running' ? 'success' : 'warning'">
                       <span style="display: flex; align-items: center; gap: 5px;">
                         <span v-if="scope.row.status === 'Running'" class="status-dot green"></span>
                         <span v-else class="status-dot yellow"></span>
@@ -568,5 +600,14 @@ onBeforeUnmount(() => {
 .status-dot.red {
   background-color: #F56C6C;
   box-shadow: 0 0 5px #F56C6C;
+}
+.task-detail-popover p {
+  margin: 5px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.task-detail-popover strong {
+  color: #606266;
+  margin-right: 5px;
 }
 </style>
