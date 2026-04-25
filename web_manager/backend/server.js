@@ -300,85 +300,26 @@ app.get('/api/ai/status', (req, res) => {
     try {
         const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : { streams: { smoking: [], occupancy: [] } };
         
-        // 1. 尝试从 AI Engine 的 Flask API 获取详细状态 (作为最可靠的 Running 证据)
-        const fetchAiEngineStatus = () => {
-            return new Promise((resolve) => {
-                const request = http.get(`http://${AI_ENGINE_HOST}:5000/status`, (apiRes) => {
-                    let data = '';
-                    apiRes.on('data', chunk => data += chunk);
-                    apiRes.on('end', () => {
-                        try {
-                            resolve({ success: true, data: JSON.parse(data) });
-                        } catch (e) {
-                            resolve({ success: false, error: 'JSON Parse Error' });
-                        }
-                    });
-                });
-                request.on('error', (e) => resolve({ success: false, error: e.message }));
-                request.setTimeout(1500, () => {
-                    request.destroy();
-                    resolve({ success: false, error: 'Timeout' });
-                });
-            });
-        };
-
-        // 2. 结合 systemd 检查 (作为兜底)
-        exec(`${HOST_NSENTER} systemctl is-active ai-engine.service`, async (err, stdout) => {
-            const isSystemdActive = (stdout || '').trim() === 'active';
-            const aiStatusResult = await fetchAiEngineStatus();
+        exec(`${HOST_NSENTER} systemctl is-active ai-engine`, (err, stdout) => {
+            const isAiEngineUp = (stdout || '').trim() === 'active';
             
-            // 只要 API 通了，或者 systemd 说是 active，就认为引擎是在线的
-            const isAiEngineUp = aiStatusResult.success || isSystemdActive;
-            const aiEngineDetails = aiStatusResult.success ? aiStatusResult.data : null;
-
             let tasks = [];
             if (config.streams) {
-                // 处理吸烟检测任务
                 if (config.streams.smoking) {
                     config.streams.smoking.forEach(s => {
-                        let status = isAiEngineUp ? 'Running' : 'Offline';
-                        let detail = "";
-                        
-                        if (aiEngineDetails?.models?.smoking) {
-                            const smokingInfo = aiEngineDetails.models.smoking;
-                            status = smokingInfo.status; 
-                            detail = smokingInfo.status === 'Failed' ? `Error: ${smokingInfo.error}` : `Model: ${smokingInfo.model.split('/').pop()}`;
-                        }
-
                         tasks.push({
                             camId: s.id,
                             taskType: 'smoking',
-                            status: status,
-                            detail: detail
+                            status: isAiEngineUp ? 'Running' : 'Offline'
                         });
                     });
                 }
-                // 处理人员感知任务
                 if (config.streams.occupancy) {
                     config.streams.occupancy.forEach(s => {
-                        let status = isAiEngineUp ? 'Running' : 'Offline';
-                        let detail = "";
-                        let modelInfo = null;
-
-                        if (aiEngineDetails?.models?.presence) {
-                            const p = aiEngineDetails.models.presence;
-                            status = p.status;
-                            modelInfo = {
-                                active: p.active_backend,
-                                primary: p.primary_model.split('/').pop(),
-                                primaryStatus: p.primary_status,
-                                fallback: p.fallback_model.split('/').pop(),
-                                fallbackStatus: p.fallback_status
-                            };
-                            detail = `Backend: ${p.active_backend}`;
-                        }
-
                         tasks.push({
                             camId: s.id,
                             taskType: 'occupancy',
-                            status: status,
-                            detail: detail,
-                            modelInfo: modelInfo
+                            status: isAiEngineUp ? 'Running' : 'Offline'
                         });
                     });
                 }
