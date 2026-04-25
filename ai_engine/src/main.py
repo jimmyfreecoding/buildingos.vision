@@ -12,26 +12,32 @@ import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
 # --- 强制路径修复 (针对 systemd 运行环境) ---
-current_file_path = os.path.abspath(__file__)
-current_dir = os.path.dirname(current_file_path)  # 这应该是 .../ai_engine/src
-project_root = os.path.abspath(os.path.join(current_dir, "../../")) # 这应该是 .../buildingos.vision
-
-# 核心：将 src 所在目录和项目根目录都加入 sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
-# 确保能找到 yolo_infer.py, rfdetr_trt_infer.py, utils.py
+# --- Utility Functions (Inline to avoid ModuleNotFoundError) ---
+def load_config(path):
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading config from {path}: {e}")
+        return {}
+
+def log_info(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] {msg}")
+
+def log_error(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] ❌ {msg}")
+
+# --- Import Local Modules ---
 try:
     from yolo_infer import YoloTensorRTEngine
     from rfdetr_trt_infer import RFDETRTensorRTEngine
-    from utils import log_info, log_error, load_config
-except ImportError:
-    # 兼容带包名的导入方式
-    from src.yolo_infer import YoloTensorRTEngine
-    from src.rfdetr_trt_infer import RFDETRTensorRTEngine
-    from src.utils import log_info, log_error, load_config
+except ImportError as e:
+    log_error(f"Failed to import local modules: {e}")
+    sys.exit(1)
 
 # --- Global Configurations ---
 config_path = os.path.join(os.path.dirname(__file__), '../config/config.json')
