@@ -12,32 +12,34 @@ import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
 # --- 强制写死宿主机运行路径 ---
-# 既然所有 .py 都在 src 下，且通过 systemd 运行，直接将当前目录加入 sys.path
 current_dir = "/home/buildingos/buildingos.vision/ai_engine/src"
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# 直接从当前目录导入，不搞任何兼容层
+# 直接从当前目录导入
 from yolo_infer import YoloTensorRTEngine
 from rfdetr_trt_infer import RFDETRTensorRTEngine
 
-# --- 核心工具函数直接写死在 main.py，彻底干掉 utils.py 依赖 ---
+# --- 核心工具函数写死 ---
 def load_config(path):
-    # 强制使用宿主机绝对路径，不走任何转换
     real_path = "/home/buildingos/buildingos.vision/ai_engine/config/config.json"
     try:
         with open(real_path, 'r') as f:
             config = json.load(f)
-            # 关键修复：当 AI Engine 在宿主机直跑时，将 zlm 域名替换为 localhost
+            # 彻底写死：宿主机访问 ZLM 必须使用 localhost:10554
             if "streams" in config:
                 for stream_type in ["smoking", "occupancy"]:
                     if stream_type in config["streams"]:
                         for stream in config["streams"][stream_type]:
-                            if "url" in stream and "rtsp://zlm:" in stream["url"]:
+                            # 替换域名 zlm -> localhost
+                            if "url" in stream:
                                 stream["url"] = stream["url"].replace("rtsp://zlm:", "rtsp://localhost:")
+                                # 强制补全端口，防止 FFmpeg 报 Port missing
+                                if "rtsp://localhost/" in stream["url"]:
+                                    stream["url"] = stream["url"].replace("rtsp://localhost/", "rtsp://localhost:10554/")
             return config
     except Exception as e:
-        print(f"Error loading config from {real_path}: {e}")
+        print(f"Error loading config: {e}")
         sys.exit(1)
 
 def log_info(msg):
