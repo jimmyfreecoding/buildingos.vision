@@ -11,19 +11,27 @@ import numpy as np
 import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
-# 添加项目根目录到路径，以便直接从 src 导入
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+# --- 强制路径修复 (针对 systemd 运行环境) ---
+current_file_path = os.path.abspath(__file__)
+current_dir = os.path.dirname(current_file_path)  # 这应该是 .../ai_engine/src
+project_root = os.path.abspath(os.path.join(current_dir, "../../")) # 这应该是 .../buildingos.vision
+
+# 核心：将 src 所在目录和项目根目录都加入 sys.path
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# 强制将当前 src 目录也加入路径，兼容 from yolo_infer 这种写法
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
-
-from yolo_infer import YoloTensorRTEngine
-from rfdetr_trt_infer import RFDETRTensorRTEngine
-from utils import log_info, log_error, load_config
+# 确保能找到 yolo_infer.py, rfdetr_trt_infer.py, utils.py
+try:
+    from yolo_infer import YoloTensorRTEngine
+    from rfdetr_trt_infer import RFDETRTensorRTEngine
+    from utils import log_info, log_error, load_config
+except ImportError:
+    # 兼容带包名的导入方式
+    from src.yolo_infer import YoloTensorRTEngine
+    from src.rfdetr_trt_infer import RFDETRTensorRTEngine
+    from src.utils import log_info, log_error, load_config
 
 # --- Global Configurations ---
 config_path = os.path.join(os.path.dirname(__file__), '../config/config.json')
