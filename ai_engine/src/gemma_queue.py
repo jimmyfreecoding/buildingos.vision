@@ -96,9 +96,10 @@ class GemmaReviewQueue:
         last_error = ""
         for attempt in range(max_retries):
             try:
-                # 1. 强制在请求前物理清理 Slot 缓存
+                # 1. 尝试清理 Slot 缓存 (兼容新旧 API)
                 try:
-                    requests.delete(self.gemma_slots_url, timeout=1.0)
+                    # 优先尝试新版 API (POST with action=release)
+                    requests.post(f"{self.gemma_slots_url}?action=release", timeout=0.5)
                 except:
                     pass
                     

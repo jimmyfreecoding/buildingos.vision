@@ -7,7 +7,8 @@ exec /home/buildingos/ai/llama.cpp/build/bin/llama-server \
   --host 0.0.0.0 \
   --port 8080 \
   --ctx-size 2048 \
-  --n-gpu-layers 40 \
+  --n-gpu-layers 38 \
   --threads 4 \
   --parallel 1 \
+  --flash-attn \
   --alias buildingos_review_engine

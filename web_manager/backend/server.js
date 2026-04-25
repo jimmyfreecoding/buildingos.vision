@@ -557,19 +557,22 @@ app.get('/api/gemma/status', (req, res) => {
 });
 
 const clearGemmaCache = () => {
-    const deleteOptions = {
+    // 兼容新版 llama-server API: POST /slots/{id}?action=release
+    const postOptions = {
         hostname: GEMMA_HOST,
         port: GEMMA_PORT,
-        path: '/slots/0',
-        method: 'DELETE'
+        path: '/slots/0?action=release',
+        method: 'POST'
     };
-    const delReq = http.request(deleteOptions, (delRes) => {
-        console.log(`Gemma context cache cleared, status: ${delRes.statusCode}`);
+    const postReq = http.request(postOptions, (res) => {
+        if (res.statusCode !== 200) {
+            // 如果 POST 也失败，尝试旧版 DELETE (以防万一)
+            const deleteOptions = { ...postOptions, path: '/slots/0', method: 'DELETE' };
+            http.request(deleteOptions).end();
+        }
     });
-    delReq.on('error', (err) => {
-        console.error('Failed to clear Gemma context cache:', err.message);
-    });
-    delReq.end();
+    postReq.on('error', () => {});
+    postReq.end();
 };
 
 app.post('/api/gemma/infer', (req, res) => {

@@ -125,8 +125,12 @@ def generate_gemma_summary(summary_text_base):
     }
     
     try:
-        # 预清理内存
-        for i in range(8): requests.delete(f"http://127.0.0.1:8080/slots/{i}", timeout=0.5)
+        # 预清理内存 (兼容新版 llama-server API)
+        for i in range(4): # 减少循环次数，优先清理前几个 slot
+            try:
+                requests.post(f"http://127.0.0.1:8080/slots/{i}?action=release", timeout=0.3)
+            except:
+                pass
         
         start_time = time.time()
         resp = requests.post(GEMMA_URL, json=payload, timeout=90)
