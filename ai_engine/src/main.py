@@ -370,7 +370,7 @@ def occupancy_task(cam_config):
                     ssm.trigger_presence()
             
             # 6. 保存本地日志 (Heatmap 所需 - 严格还原原始格式)
-            visual_score = person_results[0]['conf'] if person_results else 0.0
+            visual_score = results[0]['conf'] if results else 0.0
             save_presence_log(
                 cam_id=cam_id,
                 area_code=area_code,
