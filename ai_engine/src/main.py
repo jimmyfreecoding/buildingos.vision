@@ -11,19 +11,26 @@ import numpy as np
 import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
-# --- 强制路径修复 (针对 systemd 运行环境) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
+# --- 强制写死宿主机运行路径 ---
+# 既然所有 .py 都在 src 下，且通过 systemd 运行，直接将当前目录加入 sys.path
+current_dir = "/home/buildingos/buildingos.vision/ai_engine/src"
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# --- Utility Functions (Inline to avoid ModuleNotFoundError) ---
+# 直接从当前目录导入，不搞任何兼容层
+from yolo_infer import YoloTensorRTEngine
+from rfdetr_trt_infer import RFDETRTensorRTEngine
+
+# --- 核心工具函数直接写死在 main.py，彻底干掉 utils.py 依赖 ---
 def load_config(path):
+    # 强制使用宿主机绝对路径，不走任何转换
+    real_path = "/home/buildingos/buildingos.vision/ai_engine/config/config.json"
     try:
-        with open(path, 'r') as f:
+        with open(real_path, 'r') as f:
             return json.load(f)
     except Exception as e:
-        print(f"Error loading config from {path}: {e}")
-        return {}
+        print(f"Error loading config from {real_path}: {e}")
+        sys.exit(1)
 
 def log_info(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] {msg}")
@@ -31,13 +38,10 @@ def log_info(msg):
 def log_error(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] ❌ {msg}")
 
-# --- Import Local Modules ---
-try:
-    from yolo_infer import YoloTensorRTEngine
-    from rfdetr_trt_infer import RFDETRTensorRTEngine
-except ImportError as e:
-    log_error(f"Failed to import local modules: {e}")
-    sys.exit(1)
+# --- Global Configurations ---
+# 同样写死
+config = load_config(None)
+ai_config = config.get("ai_engine", {})
 
 # --- Global Configurations ---
 config_path = os.path.join(os.path.dirname(__file__), '../config/config.json')
