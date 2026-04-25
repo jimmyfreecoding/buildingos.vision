@@ -26,17 +26,25 @@ def load_config(path):
     try:
         with open(real_path, 'r') as f:
             config = json.load(f)
+            
             # 彻底写死：宿主机访问 ZLM 必须使用 localhost:10554
             if "streams" in config:
                 for stream_type in ["smoking", "occupancy"]:
                     if stream_type in config["streams"]:
                         for stream in config["streams"][stream_type]:
-                            # 替换域名 zlm -> localhost
                             if "url" in stream:
+                                # 先统一替换域名
                                 stream["url"] = stream["url"].replace("rtsp://zlm:", "rtsp://localhost:")
-                                # 强制补全端口，防止 FFmpeg 报 Port missing
-                                if "rtsp://localhost/" in stream["url"]:
-                                    stream["url"] = stream["url"].replace("rtsp://localhost/", "rtsp://localhost:10554/")
+                                # 修正端口：如果已经有端口(如 :554)，替换为 :10554；如果没有端口，补上 :10554
+                                if "localhost:554" in stream["url"]:
+                                    stream["url"] = stream["url"].replace("localhost:554", "localhost:10554")
+                                elif "localhost/" in stream["url"]:
+                                    stream["url"] = stream["url"].replace("localhost/", "localhost:10554/")
+            
+            # 彻底写死：宿主机访问 MQTT 必须使用 localhost
+            if "mqtt" in config:
+                config["mqtt"]["broker"] = "localhost"
+                
             return config
     except Exception as e:
         print(f"Error loading config: {e}")
@@ -49,17 +57,18 @@ def log_error(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] ❌ {msg}")
 
 # --- Global Configurations ---
-# 同样写死
 config = load_config(None)
-ai_config = config.get("ai_engine", {})
-
-# --- Global Configurations ---
-config_path = os.path.join(os.path.dirname(__file__), '../config/config.json')
-config = load_config(config_path)
 ai_config = config.get("ai_engine", {})
 
 # --- Flask App for Single Image Test ---
 flask_app = Flask(__name__)
+
+@flask_app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "status": "online",
+        "message": "BuildingOS Vision AI Engine is running. Use /status for details."
+    })
 
 # 模型状态追踪 (移到这里以便 api_status 访问)
 model_status = {
