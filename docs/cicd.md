@@ -355,3 +355,30 @@ sudo systemctl restart jtop-daemon llama-gemma
 - 在当前 Jetson 边缘部署条件下，`ai-engine` 宿主机化是优先方案。
 - 该方案前提是：`venv` 隔离、`systemd` 托管、OTA 流程切换到 `git pull + systemctl restart ai-engine`。
 - 其余服务保持 Docker，不做架构扰动。
+
+
+
+
+## 12.日常开发指令集
+
+
+### 12.1 更新ai-engine代码：
+
+cd buildingos.vision/
+git pull
+sudo systemctl restart ai-engine && \
+sudo systemctl status ai-engine --no-pager -n 20
+
+
+### 12.2 更新前端代码：
+cd buildingos.vision/
+git pull
+docker compose up -d --build web-manager-frontend-deploy
+docker compose restart web-nginx
+
+
+### 12.3 更新后端代码
+
+cd buildingos.vision/
+git pull
+docker compose up -d --build web-manager-backend
