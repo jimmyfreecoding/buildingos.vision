@@ -11,12 +11,14 @@ import numpy as np
 import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
-# 添加 src 到路径以确保能导入模块
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# 添加项目根目录到路径，以便直接从 src 导入
+project_root = os.path.abspath(os.path.join(os.path.dirname(__module__ if '__module__' in locals() else __file__), "../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from src.yolo_infer import YoloTensorRTEngine
-from src.rfdetr_trt_infer import RFDETRTensorRTEngine
-from src.utils import log_info, log_error, load_config
+from ai_engine.src.yolo_infer import YoloTensorRTEngine
+from ai_engine.src.rfdetr_trt_infer import RFDETRTensorRTEngine
+from ai_engine.src.utils import log_info, log_error, load_config
 
 # --- Global Configurations ---
 config_path = os.path.join(os.path.dirname(__file__), '../config/config.json')
