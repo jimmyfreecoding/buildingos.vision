@@ -565,6 +565,7 @@ def process_camera(cam_id, cam_info):
                     decision_chain = []
                     yolo_count = len(person_boxes)
                     annotated_frame = frame.copy()
+                    gemma_details = None  # ✅ 预先初始化，防止高置信度跳过复核时变量未定义
                     
                     # 绘制时间戳
                     cv2.putText(annotated_frame, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
