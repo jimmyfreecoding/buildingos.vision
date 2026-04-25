@@ -268,9 +268,11 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, frame=None, deci
             
         with open(log_file, 'w', encoding='utf-8') as f:
             json.dump(existing_data, f, indent=2, ensure_ascii=False)
+        
+        log_info(f"📊 日志保存成功: {log_file} (条目数: {len(existing_data)})")
             
     except Exception as e:
-        log_error(f"Error saving minute log: {e}")
+        log_error(f"Error saving minute log to {target_dir}: {e}")
 
 # --- 业务逻辑：状态机存储 ---
 camera_state_machines = {}
@@ -310,12 +312,11 @@ def occupancy_task(cam_config):
             person_count = len(results)
             yolo_has_person = person_count > 0
             
-            decision_chain = [f"一级检测 ({presence_detector_source}): 发现 {person_count} 人"]
+            decision_chain = [f"一级检测 ({presence_detector_source}): 发现 {person_count} 个目标"]
             final_has_person = yolo_has_person
             gemma_details = None
             
-            # 3. 二级复核 (Gemma) - 如果 YOLO 判定有人或处于关键决策点
-            # 这里的逻辑：如果 YOLO 判定有人，调用 Gemma 确认，防止误报
+            # 3. 二级复核 (Gemma) - 如果 YOLO 判定有人
             if yolo_has_person:
                 _, img_encoded = cv2.imencode('.jpg', frame)
                 gemma_res = gemma_queue.submit_review(
@@ -330,7 +331,7 @@ def occupancy_task(cam_config):
                 gemma_details = gemma_res.get("reasoning", "")
                 decision_chain.append(f"Gemma 二级复核: {gemma_res.get('result')} ({gemma_details})")
                 
-                # 最终判定：Gemma 确认为有人才是有人 (或者 Gemma 不确定时保守认为有人)
+                # 最终判定：遵循 Gemma 结果 (或者 Gemma 不确定时保守认为有人)
                 final_has_person = (gemma_res.get("result") != "NO")
             
             # 4. 更新状态机
