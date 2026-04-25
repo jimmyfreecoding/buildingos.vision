@@ -27,7 +27,15 @@ def load_config(path):
     real_path = "/home/buildingos/buildingos.vision/ai_engine/config/config.json"
     try:
         with open(real_path, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            # 关键修复：当 AI Engine 在宿主机直跑时，将 zlm 域名替换为 localhost
+            if "streams" in config:
+                for stream_type in ["smoking", "occupancy"]:
+                    if stream_type in config["streams"]:
+                        for stream in config["streams"][stream_type]:
+                            if "url" in stream and "rtsp://zlm:" in stream["url"]:
+                                stream["url"] = stream["url"].replace("rtsp://zlm:", "rtsp://localhost:")
+            return config
     except Exception as e:
         print(f"Error loading config from {real_path}: {e}")
         sys.exit(1)
