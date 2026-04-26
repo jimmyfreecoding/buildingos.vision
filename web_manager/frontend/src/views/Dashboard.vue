@@ -229,6 +229,34 @@
             </el-table>
           </div>
         </el-card>
+
+        <!-- System Management Card -->
+        <el-card class="box-card manage-card">
+          <template #header>
+            <div class="card-header">
+              <span><el-icon><Setting /></el-icon> {{ $t('dashboard.sysManage') }}</span>
+            </div>
+          </template>
+          <div class="manage-content">
+            <el-row :gutter="10">
+              <el-col :span="8">
+                <el-button type="primary" plain style="width: 100%" @click="handleRestartAi">
+                  <el-icon><Refresh /></el-icon> {{ $t('dashboard.restartAi') }}
+                </el-button>
+              </el-col>
+              <el-col :span="8">
+                <el-button type="warning" plain style="width: 100%" @click="handleRestartBackend">
+                  <el-icon><Connection /></el-icon> {{ $t('dashboard.restartBackend') }}
+                </el-button>
+              </el-col>
+              <el-col :span="8">
+                <el-button type="danger" plain style="width: 100%" @click="handleRedeployFrontend">
+                  <el-icon><Upload /></el-icon> {{ $t('dashboard.redeployFrontend') }}
+                </el-button>
+              </el-col>
+            </el-row>
+          </div>
+        </el-card>
       </el-col>
     </el-row>
   </div>
@@ -238,10 +266,12 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
-import { Monitor, VideoCamera, Cpu } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Monitor, VideoCamera, Cpu, Setting, Refresh, Connection, Upload } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 
 const { t } = useI18n()
+const router = useRouter()
 const loadingSys = ref(false)
 let refreshInterval = null
 let zlmInterval = null
@@ -451,6 +481,68 @@ const fetchGemmaStatus = async () => {
   } catch (e) {
     gemmaStatus.value = 'Offline'
     gemmaDetails.value = null
+  }
+}
+
+// Management Handlers
+const handleRestartAi = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t('dashboard.restartAiConfirm'),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      }
+    )
+    const res = await axios.post('/api/system/restart-ai')
+    ElMessage.success(res.data.message)
+    setTimeout(() => fetchAiTasks(), 2000)
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(t('params.saveFailed'))
+  }
+}
+
+const handleRestartBackend = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t('dashboard.restartBackendConfirm'),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      }
+    )
+    await axios.post('/api/system/restart-backend')
+    ElMessage.success(t('common.rebooting'))
+    setTimeout(() => {
+      router.push('/login')
+    }, 2000)
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(t('params.saveFailed'))
+  }
+}
+
+const handleRedeployFrontend = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t('dashboard.redeployFrontendConfirm'),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      }
+    )
+    const res = await axios.post('/api/system/redeploy-frontend')
+    ElMessage.success(res.data.message)
+    setTimeout(() => {
+      window.location.reload()
+    }, 3000)
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(t('params.saveFailed'))
   }
 }
 

@@ -721,8 +721,15 @@ def register_cameras_to_zlm():
     # 把等待时间拉长，因为容器启动有先后，ZLM 可能还没就绪
     time.sleep(10) 
     
-    for cam_id, cam_info in camera_config.items():
-        # 这里必须使用摄像头的原始 RTSP 物理地址注册到 ZLM 中
+    # 获取 ZLM API 根路径
+    zlm_api_root = get_real_url(config.get("zlm", {}).get("api_url", "http://zlm:80/index/api"), ZLM_HTTP_PORT)
+    if not zlm_api_root.endswith("/addStreamProxy"):
+        api_url = f"{zlm_api_root.rstrip('/')}/addStreamProxy"
+    else:
+        api_url = zlm_api_root
+
+    # 为每个摄像头创建一个独立的注册重试逻辑
+    def register_single_cam(cam_id, cam_info):
         rtsp_source = cam_info.get("source_url")
         if not rtsp_source:
             # 兼容处理：尝试从 config 原始数据里捞
@@ -735,22 +742,10 @@ def register_cameras_to_zlm():
         
         if not rtsp_source:
             print(f"[{cam_id}] Cannot find physical source_url for ZLM proxy. Skipping.")
-            continue
+            return
             
-        enabled = cam_info.get("enabled", True)
-        
-        if not enabled:
-            continue
-            
-        # 注意：这里调用的是宿主机或者 Docker 内部网络名
-        # 使用 get_real_url 实现自适应：如果在宿主机运行，将 zlm:80 替换为 127.0.0.1:10081
-        zlm_api_root = get_real_url(config.get("zlm", {}).get("api_url", "http://zlm:80/index/api"), ZLM_HTTP_PORT)
-        
-        # 彻底解决 URL 拼接可能导致的 404 问题：确保路径包含 addStreamProxy
-        if not zlm_api_root.endswith("/addStreamProxy"):
-            api_url = f"{zlm_api_root.rstrip('/')}/addStreamProxy"
-        else:
-            api_url = zlm_api_root
+        if not cam_info.get("enabled", True):
+            return
 
         params = {
             "secret": ZLM_API_SECRET,
@@ -765,22 +760,34 @@ def register_cameras_to_zlm():
         }
         query_string = urllib.parse.urlencode(params)
         full_url = f"{api_url}?{query_string}"
-        
-        try:
-            req = urllib.request.Request(full_url, method="POST")
-            with urllib.request.urlopen(req) as response:
-                res_data = json.loads(response.read().decode())
-                if res_data.get("code") == 0:
-                    # 播放地址同样需要自适应转换显示
-                    play_url = get_real_url(f"rtsp://zlm:554/live/{cam_id}")
-                    print(f"[{cam_id}] ZLM Proxy configured. Live at {play_url}")
-                elif "already exists" in res_data.get("msg", ""):
-                    # 忽略已存在的报错，静默成功
-                    pass
-                else:
-                    print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}")
-        except Exception as e:
-            print(f"[{cam_id}] Could not connect to ZLM API ({api_url}): {e}")
+
+        retry_count = 0
+        while True:
+            try:
+                req = urllib.request.Request(full_url, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res_data = json.loads(response.read().decode())
+                    if res_data.get("code") == 0:
+                        play_url = get_real_url(f"rtsp://zlm:554/live/{cam_id}")
+                        print(f"[{cam_id}] ZLM Proxy configured successfully. Live at {play_url}")
+                        break
+                    elif "already exists" in res_data.get("msg", ""):
+                        print(f"[{cam_id}] ZLM Proxy already exists. Skipping.")
+                        break
+                    else:
+                        print(f"[{cam_id}] ZLM Proxy failed: {res_data.get('msg')}. Retrying in 30s...")
+            except Exception as e:
+                print(f"[{cam_id}] Connection to ZLM API failed: {e}. Retrying in 30s...")
+            
+            retry_count += 1
+            time.sleep(30) # 失败后每 30 秒重试一次
+
+    # 启动多个线程并行处理每个摄像头的注册，防止一个摄像头卡住影响全局
+    reg_threads = []
+    for cam_id, cam_info in camera_config.items():
+        t = threading.Thread(target=register_single_cam, args=(cam_id, cam_info), daemon=True)
+        t.start()
+        reg_threads.append(t)
 
 # --- Main Entry Point ---
 if __name__ == "__main__":

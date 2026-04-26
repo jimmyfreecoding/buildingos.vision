@@ -262,13 +262,46 @@ app.post('/api/system/reboot', (req, res) => {
     res.json({ message: 'System is rebooting in 3 seconds...' });
     console.log('Reboot command received. Rebooting soon...');
     
-    // 实际的重启通常由底层宿主机执行，在容器内如果没有 privileged 权限，重启会失败。
-    // 这里我们先模拟，后期可以通过 docker.sock 或特定的主机脚本实现硬重启
     setTimeout(() => {
-        exec('reboot', (error, stdout, stderr) => {
+        exec(`${HOST_NSENTER} reboot`, (error, stdout, stderr) => {
             if (error) console.error(`Reboot error: ${error}`);
         });
     }, 3000);
+});
+
+// 重启 AI Engine 宿主机服务
+app.post('/api/system/restart-ai', (req, res) => {
+    console.log('Restarting AI Engine host service...');
+    exec(`${HOST_NSENTER} systemctl restart ai-engine`, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`AI Engine restart failed: ${error}`);
+            return res.status(500).json({ error: 'Failed to restart AI Engine' });
+        }
+        res.json({ message: 'AI Engine restarted successfully' });
+    });
+});
+
+// 重启后端服务 (容器自身重启)
+app.post('/api/system/restart-backend', (req, res) => {
+    res.json({ message: 'Backend is restarting...' });
+    console.log('Backend restart requested. Exiting process...');
+    setTimeout(() => {
+        process.exit(0); // 依赖 Docker restart: always
+    }, 1000);
+});
+
+// 重新部署前端 (触发 Docker 容器拉取最新静态文件)
+app.post('/api/system/redeploy-frontend', (req, res) => {
+    console.log('Redeploying frontend...');
+    // 这里通过 nsenter 执行宿主机的 docker compose 命令
+    const cmd = `cd ${PROJECT_DIR} && ${HOST_NSENTER} docker compose up -d --build web-manager-frontend-deploy && ${HOST_NSENTER} docker compose restart web-nginx`;
+    exec(cmd, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Frontend redeploy failed: ${error}`);
+            return res.status(500).json({ error: 'Failed to redeploy frontend' });
+        }
+        res.json({ message: 'Frontend redeployed successfully' });
+    });
 });
 
 // --- 2. OTA 升级 API ---
@@ -360,20 +393,56 @@ app.post('/api/config', (req, res) => {
     }
 });
 
-// --- 4. 网络配置 API (模拟) ---
+// --- 4. 网络配置 API ---
 app.get('/api/network', (req, res) => {
-    res.json({
-        mode: 'static',
-        ip: '192.168.1.100',
-        netmask: '255.255.255.0',
-        gateway: '192.168.1.1',
-        dns: '8.8.8.8'
+    // 获取当前默认网卡的网络信息
+    const cmd = `${HOST_NSENTER} nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN device show eth0 || ${HOST_NSENTER} nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN device show wlan0`;
+    
+    exec(cmd, (err, stdout) => {
+        if (err) {
+            return res.json({ mode: 'dhcp', ip: '', netmask: '', gateway: '', dns: '' });
+        }
+        
+        const info = {};
+        stdout.split('\n').forEach(line => {
+            const [key, value] = line.split(':');
+            if (key === 'IP4.ADDRESS[1]') info.ip = value.split('/')[0];
+            if (key === 'IP4.GATEWAY') info.gateway = value;
+            if (key === 'IP4.DNS[1]') info.dns = value;
+        });
+
+        // 简单判断模式
+        exec(`${HOST_NSENTER} nmcli device show eth0 | grep "ipv4.method"`, (mErr, mStdout) => {
+            const mode = (mStdout || '').includes('manual') ? 'static' : 'dhcp';
+            res.json({
+                mode: mode,
+                ip: info.ip || '',
+                netmask: '255.255.255.0', // 简化处理
+                gateway: info.gateway || '',
+                dns: info.dns || ''
+            });
+        });
     });
 });
 
 app.post('/api/network', (req, res) => {
+    const { mode, ip, gateway, dns } = req.body;
     console.log('Applying new network settings:', req.body);
-    res.json({ message: 'Network settings applied. Please reboot for changes to take full effect.' });
+    
+    let cmd = '';
+    if (mode === 'dhcp') {
+        cmd = `${HOST_NSENTER} nmcli con mod eth0 ipv4.method auto && ${HOST_NSENTER} nmcli con up eth0`;
+    } else {
+        cmd = `${HOST_NSENTER} nmcli con mod eth0 ipv4.addresses ${ip}/24 ipv4.gateway ${gateway} ipv4.dns "${dns}" ipv4.method manual && ${HOST_NSENTER} nmcli con up eth0`;
+    }
+
+    exec(cmd, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Network apply failed: ${error}`);
+            return res.status(500).json({ error: 'Failed to apply network settings' });
+        }
+        res.json({ message: 'Network settings applied. System may disconnect.' });
+    });
 });
 
 // --- 5. Occupancy Logs API ---

@@ -46,7 +46,8 @@
 - **核心运行时依赖：**
   - `ffmpeg` (宿主机必须安装，用于 RTSP 抓拍采样)
   - `tensorrt` (由 JetPack 系统提供，需通过 `--system-site-packages` 穿透进入 venv)
-  - `pycuda` (GPU 内存管理，通过 requirements.txt 安装)
+  - `pycuda` (GPU 内存管理，通过 pip 编译安装，需对齐系统 CUDA 路径)
+  - **重要变更：** 推理引擎已全面切换为 **纯 TensorRT 架构（No-Torch）**。不再依赖 `torch` 或 `ultralytics` 库，彻底解决了 `libcusparseLt.so.0` 缺失与驱动版本冲突问题。
 - TensorRT 运行时与 `.engine` 序列化版本必须一致
   - 例如：运行时 `Current Version: 239` 时，`engine` 也必须是 `239` 生成
 - CUDA 驱动由 JetPack 提供，不在项目内重复安装
@@ -176,11 +177,11 @@ export CPATH=/usr/local/cuda/include:$CPATH
 export LIBRARY_PATH=/usr/local/cuda/lib64:$LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 # 4. 安装 ffmpeg 及业务依赖
-sudo apt-get update && sudo apt-get install -y ffmpeg
+sudo apt-get update && sudo apt-get install -y ffmpeg build-essential python3-dev
 pip install -U pip
 pip install -r requirements.txt
-# 5. 手动安装 pycuda (确保环境变量生效)
-pip install pycuda==2024.1.2
+# 5. 手动安装 pycuda (必须带上系统 CUDA 路径，否则会因找不到编译器或库而失败)
+PATH=/usr/local/cuda/bin:$PATH pip install pycuda==2024.1.2
 
 # 6. 修复共享目录权限 (核心: 确保宿主 ai-engine 有权写入 ZLM 日志目录)
 mkdir -p ~/buildingos.vision/zlm/www/occupancy_logs
@@ -270,7 +271,7 @@ git pull origin main && \
 docker compose -f docker-compose.yml up -d --build && \
 # 3. 准备 ai-engine 宿主环境 (开启系统包穿透)
 cd ai_engine && \
-sudo apt-get update && sudo apt-get install -y ffmpeg && \
+sudo apt-get update && sudo apt-get install -y ffmpeg build-essential python3-dev && \
 python3 -m venv --system-site-packages .venv && \
 export PATH=/usr/local/cuda/bin:$$PATH && \
 export CUDA_ROOT=/usr/local/cuda && \
@@ -278,7 +279,7 @@ export CPATH=/usr/local/cuda/include:$$CPATH && \
 export LIBRARY_PATH=/usr/local/cuda/lib64:$$LIBRARY_PATH && \
 .venv/bin/pip install -U pip && \
 .venv/bin/pip install -r requirements.txt && \
-.venv/bin/pip install pycuda==2024.1.2 && \
+PATH=/usr/local/cuda/bin:$$PATH .venv/bin/pip install pycuda==2024.1.2 && \
 # 4. 修复共享目录权限 (提前创建目录以防 chown 失败)
 mkdir -p ~/buildingos.vision/zlm/www/occupancy_logs && \
 sudo chown -R buildingos:buildingos ~/buildingos.vision/zlm/www/occupancy_logs && \
