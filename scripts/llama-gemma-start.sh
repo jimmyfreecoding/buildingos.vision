@@ -23,7 +23,7 @@ exec /home/buildingos/ai/llama.cpp/build/bin/llama-server \
 # - 建议值 ：从 40 降低到 35 或 32 。 C. 限制并发与线程 ( --threads )
 # 在 Orin Nano 上，过多的线程会增加内存开销。
 
-# - 建议值 ：保持在 4 ，不要再增加了。
+# - 建议值 ：保持在  4 ，不要再增加了。
 
 
 
