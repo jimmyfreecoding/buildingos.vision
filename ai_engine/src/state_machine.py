@@ -93,54 +93,26 @@ class PresenceStateMachine:
 
 class SmokingStateMachine:
     """
-    文档 5. Smoking（吸烟）判定逻辑
-    业务本质：有人闯入后才激活 2 分钟吸烟检测小窗口。
+    Smoking（吸烟）判定逻辑 - 简化版
+    不再管理时间窗口，仅负责记录告警状态。
     """
     def __init__(self, camera_id, config):
         self.camera_id = camera_id
-        
-        self.window_duration = config.get("smoke_window_minutes", 2) * 60
-        self.require_continuous = config.get("smoke_require_presence_continuous", True)
-        
-        # 状态机状态: SMOKE_IDLE, SMOKE_WINDOW_ACTIVE, SMOKE_ALERT
-        self.state = "SMOKE_IDLE"
-        self.window_start_time = 0
-        
+        # 状态: IDLE, ALERT
+        self.state = "IDLE"
         self.lock = threading.Lock()
 
-    def trigger_presence(self):
-        """当 Presence 判定为有人闯入时，激活吸烟小窗口"""
+    def confirm_smoke(self):
+        """当检测到吸烟后调用"""
         with self.lock:
-            if self.state == "SMOKE_IDLE":
-                self.state = "SMOKE_WINDOW_ACTIVE"
-                self.window_start_time = time.time()
-                print(f"[{self.camera_id}] Smoking: 监测到人员闯入，激活 {self.window_duration//60} 分钟吸烟检测小窗口。")
-
-    def check_window_active(self):
-        """检查当前是否处于吸烟采样窗口期 (决定是否要调用 YOLO 吸烟模型)"""
-        with self.lock:
-            if self.state != "SMOKE_WINDOW_ACTIVE":
-                return False
-                
-            elapsed = time.time() - self.window_start_time
-            if elapsed >= self.window_duration:
-                print(f"[{self.camera_id}] Smoking: 小窗口结束，未发现吸烟，返回 IDLE。")
-                self.state = "SMOKE_IDLE"
-                return False
-                
+            self.state = "ALERT"
+            print(f"[{self.camera_id}] Smoking: 发现吸烟动作，更新状态。")
             return True
 
-    def confirm_smoke(self):
-        """当 Gemma 确认吸烟后调用"""
+    def reset(self):
+        """重置状态"""
         with self.lock:
-            if self.state == "SMOKE_WINDOW_ACTIVE":
-                self.state = "SMOKE_ALERT"
-                print(f"[{self.camera_id}] Smoking: 确认吸烟！准备发布告警！")
-                
-                # 告警发布后，重置状态 (或者进入冷却)
-                self.state = "SMOKE_IDLE"
-                return True
-            return False
+            self.state = "IDLE"
 
 # 测试代码
 if __name__ == "__main__":

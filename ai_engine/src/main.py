@@ -301,7 +301,7 @@ except Exception as e:
         print("   💡 Try starting it: 'sudo systemctl start emqx' or 'sudo docker compose up -d' if using Docker.")
     print("   WARNING: AI Engine will continue to run without publishing events.")
 
-def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0, gemma_details=None):
+def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None, images=None, decision_chain=None, yolo_count=0, gemma_details=None, smoking_count=0, smoking_conf=0.0):
     """
     不管是否触发 MQTT 报警，每一分钟（或每一个采样周期）都将原始判定结果
     追加保存到本地的 JSON 中，以保证前端的 Heatmap 有细粒度的数据点。
@@ -356,7 +356,9 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
                 "source": f"{presence_detector_source}+gemma",
                 "detector_type": "RF-DETR" if "rf-detr" in presence_detector_source else "YOLO",
                 "decision_chain": decision_chain,
-                "yolo_count": yolo_count
+                "yolo_count": yolo_count,
+                "smoking_count": smoking_count,
+                "smoking_conf": smoking_conf
             }
         }
         
@@ -539,9 +541,12 @@ def process_camera(cam_id, cam_info):
             now = time.time()
             need_p_sample = has_presence_task and (now - last_p_time) >= p_interval
             
-            # Smoking 仅在窗口激活时执行
-            is_smoke_active = s_sm.check_window_active() if has_presence_task else True
-            need_s_sample = has_smoking_task and is_smoke_active and ((now - last_s_time) >= s_interval)
+            # Smoking 逻辑修改：不再受窗口限制，只要有任务且满足基础间隔，或者随动于 Presence 采样
+            # 基础采样逻辑：如果有人感应任务，我们就随动；如果没有人感应只有吸烟，则按吸烟间隔跑
+            if has_presence_task:
+                need_s_sample = has_smoking_task and need_p_sample
+            else:
+                need_s_sample = has_smoking_task and (now - last_s_time) >= s_interval
 
             if need_p_sample or need_s_sample:
                 # 使用宿主机本地 FFmpeg 抓拍
@@ -554,6 +559,14 @@ def process_camera(cam_id, cam_info):
                 # 预热初始化 TensorRT (如果是首次)
                 init_tensorrt_models()
                 
+                has_person = False
+                s_count = 0
+                max_s_conf = 0.0
+                decision_chain = []
+                yolo_count = 0
+                annotated_frame = frame.copy()
+                gemma_details = None
+
                 # --- 1. Presence (人员存在) 综合判定流程 ---
                 if need_p_sample:
                     last_p_time = now
@@ -567,11 +580,7 @@ def process_camera(cam_id, cam_info):
                     # 过滤出“人”类别的框 (person_class_id 通常是 0)
                     person_boxes = [b for b in boxes if b.get('class_id') == 0]
                     
-                    has_person = False
-                    decision_chain = []
                     yolo_count = len(person_boxes)
-                    annotated_frame = frame.copy()
-                    gemma_details = None  # ✅ 预先初始化，防止高置信度跳过复核时变量未定义
                     
                     # 绘制时间戳
                     cv2.putText(annotated_frame, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -656,17 +665,6 @@ def process_camera(cam_id, cam_info):
                     # 无论有没有人，送入状态机处理时间窗口
                     event_triggered, final_status, window_mins, time_period = p_sm.update(has_person_this_frame=has_person)
                     
-                    # 【核心优化】反馈到前端页面：
-                    save_minute_log_for_frontend(
-                        cam_id, 
-                        area_code, 
-                        has_person, 
-                        images=[annotated_frame, frame], 
-                        decision_chain=decision_chain, 
-                        yolo_count=yolo_count,
-                        gemma_details=gemma_details
-                    )
-                    
                     # 如果状态机决定收敛，触发 MQTT
                     if event_triggered:
                         payload = {
@@ -681,52 +679,34 @@ def process_camera(cam_id, cam_info):
                         
                         # 【核心优化】发布报警时，也使用标注过的图作为证据
                         publish_mqtt_event(cam_id, area_code, "presence", payload, annotated_frame)
-                        
-                        # 如果确认为有人闯入，激活吸烟小窗口
-                        if final_status == "occupied":
-                            s_sm.trigger_presence()
 
-                # --- 2. Smoking (吸烟检测) 综合判定流程 ---
-                if need_s_sample and smoking_model:
-                    last_s_time = now
+                # --- 2. Smoking (吸烟检测) 随动判定流程 ---
+                if has_smoking_task and (not has_presence_task or has_person) and smoking_model:
+                    last_s_time = now # 更新采样时间
+                    # 只要本轮满足条件，立即调用吸烟模型
+                    s_boxes = smoking_model.predict(frame)
+                    s_count = len(s_boxes)
                     
-                    # YOLO 一级判定
-                    boxes = smoking_model.predict(frame)
-                    
-                    if len(boxes) > 0:
-                        # 发现可疑吸烟动作
-                        max_conf = max([b['conf'] for b in boxes])
-                        prompt = "这幅图像中，是否有人正在抽烟？(包括拿着烟、嘴里叼着烟、吐烟圈)。请排除吃东西、喝水、拿笔或托腮等动作。请回答 YES 或 NO。"
-                        
-                        success, buffer = cv2.imencode('.jpg', frame)
-                        if success:
-                            jpg_bytes = buffer.tobytes()
-                            gemma_data = gemma_queue.submit_review(f"{cam_id}_S_{now}", "smoking", jpg_bytes, prompt, yolo_conf=max_conf)
-                            gemma_res = gemma_data.get("result", "UNKNOWN")
-                        else:
-                            log_info(f"[{cam_id}] OpenCV JPEG 编码失败，跳过 Gemma 复核")
-                            gemma_res = "NO"
-                        
-                        if gemma_res == "YES":
-                            # Gemma 确认吸烟
-                            alert_triggered = s_sm.confirm_smoke()
-                            
-                            if alert_triggered:
-                                # 保存一张截图作为证据 (可选)
-                                evidence_url = "http://buildingos.local/placeholder.jpg" # 实际应上传 OSS
-                                
-                                payload = {
-                                    "cameraId": cam_id,
-                                    "areaCode": area_code,
-                                    "result": "confirmed_smoking",
-                                    "windowMinutes": config.get("smoke_window_minutes", 2),
-                                    "sampleIntervalSeconds": s_interval,
-                                    "source": f"smoking_specialist+gemma",
-                                    "detector_type": "YOLO",
-                                    "evidenceImageUrl": evidence_url,
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                                publish_mqtt_event(cam_id, area_code, "smoking", payload, frame)
+                    if s_count > 0:
+                        max_s_conf = max([b['conf'] for b in s_boxes])
+                        log_info(f"[{cam_id}] Smoking: 检测到疑似吸烟目标! (数量: {s_count}, MaxConf: {max_s_conf:.2f})")
+                        s_sm.confirm_smoke()
+                    else:
+                        log_info(f"[{cam_id}] Smoking: 区域有人但未发现吸烟动作。")
+
+                # --- 3. 记录日志 (不管是否采样人感，只要有采样就记录) ---
+                if need_p_sample or need_s_sample:
+                    save_minute_log_for_frontend(
+                        cam_id, 
+                        area_code, 
+                        has_person, 
+                        images=[annotated_frame, frame], 
+                        decision_chain=decision_chain, 
+                        yolo_count=yolo_count,
+                        gemma_details=gemma_details,
+                        smoking_count=s_count,
+                        smoking_conf=max_s_conf
+                    )
 
             # 休眠 1 秒，防止死循环跑满 CPU
             time.sleep(1)
