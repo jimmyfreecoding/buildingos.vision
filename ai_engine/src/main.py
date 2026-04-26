@@ -348,11 +348,13 @@ def save_minute_log_for_frontend(cam_id, area_code, has_person, raw_payload=None
             "camera_id": cam_id,
             "areaCode": area_code,
             "event": "Presence Sample",
+            "detector_type": "RF-DETR" if "rf-detr" in presence_detector_source else "YOLO",
             "threshold_used": "1-minute sample",
             "images": image_paths,
             "raw_payload": raw_payload or {
                 "result": "occupied" if has_person else "empty",
                 "source": f"{presence_detector_source}+gemma",
+                "detector_type": "RF-DETR" if "rf-detr" in presence_detector_source else "YOLO",
                 "decision_chain": decision_chain,
                 "yolo_count": yolo_count
             }
@@ -413,6 +415,7 @@ def publish_mqtt_event(cam_id, area_code, event_type, payload, frame=None):
             log_entry = {
                 "event": "Smoking Alert" if event_type == "smoking" else "Presence Update",
                 "areaCode": area_code,
+                "detector_type": "RF-DETR" if (event_type == "presence" and "rf-detr" in presence_detector_source) else "YOLO",
                 "is_occupied": payload.get("result") == "occupied" or payload.get("result") == "confirmed_smoking",
                 "person_count": 1 if payload.get("result") in ["occupied", "confirmed_smoking"] else 0,
                 "timestamp": payload.get("timestamp"),
@@ -555,6 +558,9 @@ def process_camera(cam_id, cam_info):
                 if need_p_sample:
                     last_p_time = now
                     
+                    # 确定当前检测器名称
+                    current_detector = "RF-DETR" if "rf-detr" in presence_detector_source else "YOLO"
+                    
                     # RF-DETR/YOLO 一级判定
                     boxes = pose_model.predict(frame)
                     
@@ -580,19 +586,19 @@ def process_camera(cam_id, cam_info):
                             color = (0, 0, 255) if cls_name == 'person' else (255, 0, 0)
                             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                             cv2.putText(annotated_frame, f"{cls_name} {conf:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
+            
                     if yolo_count > 0:
-                        decision_chain.append(f"Detector 检测到 {yolo_count} 个候选人员")
+                        decision_chain.append(f"{current_detector} 检测到 {yolo_count} 个候选人员")
                         max_conf = max([b['conf'] for b in person_boxes])
                     else:
-                        decision_chain.append("Detector 未检测到人员，准备全图复核")
+                        decision_chain.append(f"{current_detector} 未检测到人员，准备全图复核")
                         max_conf = 0.0
 
                     # --- 核心改进逻辑 ---
                     # 1. 如果 Detector 信心极高 (>= 70%)，直接通过，不麻烦 Gemma
                     if max_conf >= 0.70:
                         gemma_res = "YES"
-                        decision_chain.append(f"Detector 高置信度({max_conf:.2f})直接确认有人")
+                        decision_chain.append(f"{current_detector} 高置信度({max_conf:.2f})直接确认有人")
                     else:
                         # 2. 否则，送给 Gemma 做最终裁决
                         prompt = "检测图片中是否有活人存在，仔细鉴别头肩和肢体等人体要输，如果有人回答YES，并且告知在什么位置。没有则回答NO"
@@ -669,6 +675,7 @@ def process_camera(cam_id, cam_info):
                             "windowMinutes": window_mins,
                             "timePeriod": time_period,
                             "source": f"{presence_detector_source}+gemma",
+                            "detector_type": "RF-DETR" if "rf-detr" in presence_detector_source else "YOLO",
                             "timestamp": datetime.now().isoformat()
                         }
                         
@@ -715,6 +722,7 @@ def process_camera(cam_id, cam_info):
                                     "windowMinutes": config.get("smoke_window_minutes", 2),
                                     "sampleIntervalSeconds": s_interval,
                                     "source": f"smoking_specialist+gemma",
+                                    "detector_type": "YOLO",
                                     "evidenceImageUrl": evidence_url,
                                     "timestamp": datetime.now().isoformat()
                                 }

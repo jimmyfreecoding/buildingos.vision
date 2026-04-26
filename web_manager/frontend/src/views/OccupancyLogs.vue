@@ -187,7 +187,7 @@
             </div>
             
             <div class="log-meta" style="margin-top: 10px; font-size: 13px; color: #606266;">
-              <p><strong>{{ $t('logs.strategyChain') }}</strong> Object detection+Gemma</p>
+              <p><strong>{{ $t('logs.strategyChain') }}</strong> {{ getStrategyChain(group) }}</p>
               <p style="margin-top: 5px;">
                 <strong>{{ $t('logs.finalDecision') }}</strong> 
                 <el-popover placement="bottom" :title="$t('logs.decisionProcessTitle')" width="400" trigger="click">
@@ -219,8 +219,11 @@
             <el-row :gutter="15">
               <el-col :span="24 / Math.min(group.logs.length, 4)" v-for="log in group.logs" :key="log.id">
                 <div class="camera-evidence">
-                  <p style="font-weight: bold; margin-bottom: 5px; color: #409EFF; font-size: 13px;">
-                    <el-icon><VideoCamera /></el-icon> {{ log.camera_id }}
+                  <p style="font-weight: bold; margin-bottom: 5px; color: #409EFF; font-size: 13px; display: flex; justify-content: space-between;">
+                    <span><el-icon><VideoCamera /></el-icon> {{ log.camera_id }}</span>
+                    <el-tag size="small" type="info" effect="plain" v-if="log.detector_type || log.raw_payload?.detector_type">
+                      {{ log.detector_type || log.raw_payload?.detector_type }}
+                    </el-tag>
                   </p>
                   <!-- 显示第一张图（也就是带有时间戳和红框的 annotated_frame） -->
                   <el-image 
@@ -450,12 +453,16 @@ const translateChainStep = (step) => {
   if (!step) return step
   
   // 1. Detector 检测到 X 个候选人员
-  let match = step.match(/Detector 检测到 (\d+) 个候选人员/)
-  if (match) return t('chain.detectorDetected', { count: match[1] })
+  let match = step.match(/(Detector|RF-DETR|YOLO) 检测到 (\d+) 个候选人员/)
+  if (match) return t('chain.detectorDetected', { count: match[2] })
 
   // 2. Detector 高置信度(X)直接确认有人
-  match = step.match(/Detector 高置信度\(([\d.]+)\)直接确认有人/)
-  if (match) return t('chain.detectorHighConf', { conf: match[1] })
+  match = step.match(/(Detector|RF-DETR|YOLO) 高置信度\(([\d.]+)\)直接确认有人/)
+  if (match) return t('chain.detectorHighConf', { conf: match[2] })
+
+  // 3. Detector 未检测到人员，准备全图复核
+  match = step.match(/(Detector|RF-DETR|YOLO) 未检测到人员，准备全图复核/)
+  if (match) return t('chain.detectorNotFound', { name: match[1] })
 
   // 3. Gemma 二级裁决结果: YES/NO
   match = step.match(/Gemma 二级裁决结果: (\w+)/)
@@ -706,6 +713,13 @@ const groupedLogs = computed(() => {
 const getGroupResultTagType = (group) => {
   const isOccupied = group.logs.some(l => l.raw_payload?.result === 'occupied')
   return isOccupied ? 'success' : 'info'
+}
+
+const getStrategyChain = (group) => {
+  if (!group.logs || group.logs.length === 0) return 'Object detection+Gemma'
+  const log = group.logs[0]
+  const detector = log.detector_type || log.raw_payload?.detector_type || 'Detector'
+  return `${detector}+Gemma`
 }
 
 const formatGroupResult = (group) => {

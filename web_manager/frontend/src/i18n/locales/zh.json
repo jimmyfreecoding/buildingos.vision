@@ -261,6 +261,7 @@
   "chain": {
     "detectorDetected": "Detector 检测到 {count} 个候选人员",
     "detectorHighConf": "Detector 高置信度({conf})直接确认有人",
+    "detectorNotFound": "{name} 未检测到人员，准备全图复核",
     "gemmaL2Result": "Gemma 二级裁决结果: {res}",
     "gemmaConfirmed": "Gemma 复核: 确认图中存在真实人员",
     "gemmaMissedButFound": "Gemma 复核: Detector漏报，但Gemma在全图中发现了人员",

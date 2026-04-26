@@ -260,8 +260,9 @@
   },
   "chain": {
     "detectorDetected": "Detector detected {count} candidate(s)",
-    "detectorHighConf": "Detector confirmed presence with high confidence ({conf})",
-    "gemmaL2Result": "Gemma L2 result: {res}",
+    "detectorHighConf": "Detector high confidence({conf}) direct confirmation",
+    "detectorNotFound": "{name} no person detected, preparing for full-frame review",
+    "gemmaL2Result": "Gemma L2 review result: {res}",
     "gemmaConfirmed": "Gemma Review: Confirmed real person in image",
     "gemmaMissedButFound": "Gemma Review: Detector missed, but Gemma found person",
     "gemmaDenied": "Gemma Review: Denied (Suspected false alarm/statue)",
