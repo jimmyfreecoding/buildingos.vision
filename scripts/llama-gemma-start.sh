@@ -10,7 +10,7 @@ exec /home/buildingos/ai/llama.cpp/build/bin/llama-server \
   --n-gpu-layers 38 \
   --threads 4 \
   --parallel 1 \
-  --flash-attn \
+  --flash-attn on \
   --alias buildingos_review_engine
 
 
