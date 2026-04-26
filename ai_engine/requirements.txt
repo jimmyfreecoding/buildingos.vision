@@ -1,12 +1,10 @@
-ultralytics
 paho-mqtt
 requests
 flask
 pyyaml
-roboflow
 psutil
 tqdm
-matplotlib
 colorama
 polars
-ultralytics-thop
+pycuda
+tensorrt
